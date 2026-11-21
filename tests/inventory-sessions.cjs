@@ -9,6 +9,7 @@ function rejected(h,p,admin=false){const before=h.writes();const r=(admin?h.admi
 test('Server resolves both sessions in Vietnam time and stores their labels',()=>{
  const h=setup();success(h.post(payload()));success(h.post(payload({booking_session:'afternoon',request_id:'session-002'})));
  const [am,pm]=h.get().bookings;assert.equal(am.session,'morning');assert.equal(am.start_at,'2026-11-24T01:00:00.000Z');assert.equal(am.end_at,'2026-11-24T05:00:00.000Z');
+ assert.equal(am.status,'approved');assert.equal(am.reviewed_by,'');assert.equal(pm.status,'approved');
  assert.equal(pm.session,'afternoon');assert.equal(pm.start_at,'2026-11-24T06:00:00.000Z');assert.equal(pm.end_at,'2026-11-24T10:00:00.000Z');
 });
 test('Missing, unknown, malformed, impossible and distant dates fail without writes',()=>{
@@ -26,14 +27,38 @@ test('Clients cannot supply custom timestamps or tamper with session times',()=>
  success(h.post({...old,start_at:'2026-11-24T08:00:00+07:00',end_at:'2026-11-24T12:00:00+07:00'}));
 });
 test('Quantity is shared within a session and independent between sessions',()=>{
- const h=setup();const a=success(h.post(payload({quantity:4})));const b=success(h.post(payload({quantity:3,user_id:'sv02',request_id:'session-002'})));
- success(h.adminPost({action:'booking_update',booking_id:a.booking_id,transition:'approve'}));rejected(h,{action:'booking_update',booking_id:b.booking_id,transition:'approve'},true);
+ const h=setup();success(h.post(payload({quantity:4})));rejected(h,payload({quantity:3,user_id:'sv02',request_id:'session-002'}));
+ success(h.post(payload({quantity:2,user_id:'sv02',request_id:'session-004'})));rejected(h,payload({user_id:'sv02',request_id:'session-005'}));
  success(h.post(payload({quantity:6,booking_session:'afternoon',request_id:'session-003'})));
 });
 test('Staff blocks use sessions and enforce server permissions and capacity',()=>{
  const h=setup();const block=payload({action:'booking_block',quantity:6});rejected(h,block);
  const b=success(h.adminPost(block));assert.equal(h.get().bookings[0].session,'morning');rejected(h,payload({request_id:'session-002'}));
  success(h.adminPost({action:'booking_update',booking_id:b.booking_id,transition:'cancel'}));success(h.post(payload({request_id:'session-003'})));
+});
+test('Owners can start and finish an immediately registered session without staff approval',()=>{
+ const h=setup();const b=success(h.post(payload({quantity:6})));
+ rejected(h,{action:'booking_update',booking_id:b.booking_id,transition:'start',user_id:'sv01'});
+ h.stamp.value=new Date('2026-11-24T01:00:00Z').getTime();
+ success(h.post({action:'booking_update',booking_id:b.booking_id,transition:'start',user_id:'sv01'}));assert.equal(h.get().bookings[0].status,'active');
+ success(h.post({action:'booking_update',booking_id:b.booking_id,transition:'finish',condition:'good',user_id:'sv01'}));assert.equal(h.get().bookings[0].status,'completed');
+ success(h.post(payload({quantity:6,booking_session:'afternoon',user_id:'sv02',request_id:'session-002'})));
+});
+test('Legacy pending records can be confirmed by their owner only when capacity remains',()=>{
+ const h=setup();const old=success(h.post(payload({quantity:4})));h.rows.Bookings[1][9]='pending';
+ assert.match(success(h.post(payload({quantity:4}))).message,/chưa giữ chỗ/);
+ const newer=success(h.post(payload({quantity:3,user_id:'sv02',request_id:'session-002'})));
+ const confirm={action:'booking_update',booking_id:old.booking_id,transition:'confirm',user_id:'sv01',request_id:'confirm-001'};
+ rejected(h,{...confirm,user_id:'sv02'});rejected(h,confirm);
+ success(h.post({action:'booking_update',booking_id:newer.booking_id,transition:'cancel',user_id:'sv02'}));
+ success(h.post(confirm));success(h.post(confirm));assert.equal(h.get().bookings[0].status,'approved');assert.equal(h.get().bookings[0].reviewed_by,'');
+ rejected(h,payload({quantity:3,user_id:'sv02',request_id:'session-003'}));
+});
+test('Legacy confirmation checks current hours, maintenance and the session start',()=>{
+ const h=setup();const old=success(h.post(payload()));h.rows.Bookings[1][9]='pending';
+ const confirm={action:'booking_update',booking_id:old.booking_id,transition:'confirm',user_id:'sv01'};
+ const row=h.rows.Devices.find(r=>r[0]==='ROBOT');row[18]='09:00';rejected(h,confirm);row[18]='08:00';
+ row[17]='maintenance';rejected(h,confirm);row[17]='ready';h.stamp.value=new Date('2026-11-24T01:00:00Z').getTime();rejected(h,confirm);
 });
 test('Configured times apply to new bookings and existing records keep original times',()=>{
  const h=setup();success(h.post(payload()));

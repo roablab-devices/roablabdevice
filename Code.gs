@@ -387,12 +387,15 @@ function inventoryBookingRange(payload, device) {
     session = ['morning', 'afternoon'].find(key => local(start) === device.config[key + '_start'] + ':00.000' && local(end) === device.config[key + '_end'] + ':00.000');
     if (!session) throw new Error('Chỉ đăng ký theo buổi sáng hoặc chiều. Tải lại trang để chọn buổi.');
   }
+  inventoryValidateBookingWindow(start, end, device);
+  return {start, end, session};
+}
+function inventoryValidateBookingWindow(start, end, device) {
   const s = new Date(start).getTime(), e = new Date(end).getTime();
   if (s <= Date.now() || e <= s || s > Date.now() + 366 * 86400000) throw new Error('Buổi đã bắt đầu hoặc ngày ngoài giới hạn 1 năm. Chọn buổi khác.');
   const localStart = new Date(s + 7 * 3600000).toISOString();
   const localEnd = new Date(e + 7 * 3600000).toISOString();
   if (localStart.slice(0, 10) !== localEnd.slice(0, 10) || localStart.slice(11, 16) < device.config.open_hour || localEnd.slice(11, 16) > device.config.close_hour || (e - s) > device.config.max_minutes * 60000) throw new Error('Lịch vượt giờ mở cửa, qua ngày hoặc quá thời lượng tối đa.');
-  return {start, end, session};
 }
 function inventoryCheckCapacity(device, state, quantity, start, end, excludeId) {
   if (device.config.service_status !== 'ready') throw new Error('Thiết bị đang bảo trì hoặc bị khóa.');
@@ -435,11 +438,11 @@ function inventoryValidateDeviceChange(ss, payload, oldRow) {
     const capacity = config.total_quantity - config.unavailable_quantity - holds;
     const future = state.bookings.filter(r => r.device_id === id && ['approved', 'active'].includes(r.status) && (r.status === 'active' || new Date(r.end_at).getTime() > Date.now()));
     const latest = Math.max(Date.now() + 1000, ...future.map(r => new Date(r.end_at).getTime() + config.buffer_minutes * 60000));
-    if (capacity < 0 || inventoryPeak(state.bookings, device, inventoryNow(), new Date(latest).toISOString(), '', Date.now()) > capacity) throw new Error('Số lượng mới không đủ cho các lịch đã duyệt/đang dùng và số bị cách ly.');
+    if (capacity < 0 || inventoryPeak(state.bookings, device, inventoryNow(), new Date(latest).toISOString(), '', Date.now()) > capacity) throw new Error('Số lượng mới không đủ cho các lịch đã đăng ký/đang dùng và số bị cách ly.');
     future.forEach(r => {
       const start = new Date(new Date(r.start_at).getTime() + 7 * 3600000).toISOString();
       const end = new Date(new Date(r.end_at).getTime() + 7 * 3600000).toISOString();
-      if (start.slice(11, 16) < config.open_hour || end.slice(11, 16) > config.close_hour || new Date(r.end_at) - new Date(r.start_at) > config.max_minutes * 60000) throw new Error('Giờ/thời lượng mới không phù hợp lịch đã duyệt. Hủy hoặc xử lý lịch đó trước.');
+      if (start.slice(11, 16) < config.open_hour || end.slice(11, 16) > config.close_hour || new Date(r.end_at) - new Date(r.start_at) > config.max_minutes * 60000) throw new Error('Giờ/thời lượng mới không phù hợp lịch đã đăng ký. Hủy hoặc xử lý lịch đó trước.');
     });
   }
   return config;
@@ -511,16 +514,17 @@ function inventoryHandle(ss, payload, staff) {
     const kind = action === 'booking_block' ? 'block' : 'use';
     if (duplicate) {
       if (duplicate.request_hash !== requestHash) throw new Error('Mã yêu cầu đã dùng cho lịch khác.');
-      return {success: true, message: 'Lịch đã được ghi nhận.', booking_id: duplicate.booking_id};
+      return {success: true, message: duplicate.status === 'pending' ? 'Lịch cũ chưa giữ chỗ. Mở lịch và bấm Xác nhận đăng ký.' : 'Lịch đã được ghi nhận.', booking_id: duplicate.booking_id};
     }
     const range = inventoryBookingRange(payload, device);
     const quantity = inventoryInt(payload.quantity, 1, device.config.total_quantity);
     const purpose = inventoryText(payload.purpose, 500);
     if (!purpose) throw new Error('Nhập mục đích sử dụng hoặc lý do chặn lịch.');
     inventoryCheckCapacity(device, state, quantity, range.start, range.end);
-    const record = {booking_id: inventoryId('BK'), device_id: device.device_id, user_id: user.user_id, user_name: user.full_name, quantity, start_at: range.start, end_at: range.end, session: range.session, purpose, note: inventoryText(payload.note), status: kind === 'block' ? 'approved' : 'pending', created_at: inventoryNow(), updated_at: inventoryNow(), reviewed_by: kind === 'block' ? user.full_name : '', request_id: requestId, request_hash: requestHash, kind};
+    // Creation and capacity check share the script lock: successful registration reserves immediately.
+    const record = {booking_id: inventoryId('BK'), device_id: device.device_id, user_id: user.user_id, user_name: user.full_name, quantity, start_at: range.start, end_at: range.end, session: range.session, purpose, note: inventoryText(payload.note), status: 'approved', created_at: inventoryNow(), updated_at: inventoryNow(), reviewed_by: kind === 'block' ? user.full_name : '', request_id: requestId, request_hash: requestHash, kind};
     inventoryAppend(ss, 'Bookings', record);
-    return {success: true, message: kind === 'block' ? 'Đã chặn lịch.' : 'Đã gửi lịch, chờ cán bộ duyệt.', booking_id: record.booking_id};
+    return {success: true, message: kind === 'block' ? 'Đã chặn lịch.' : 'Đăng ký thành công. Đã giữ số lượng cho buổi sử dụng.', booking_id: record.booking_id};
   }
   if (action === 'booking_update') {
     const record = state.bookings.find(r => r.booking_id === payload.booking_id);
@@ -535,10 +539,12 @@ function inventoryHandle(ss, payload, staff) {
       return {success: true, message: 'Thao tác lịch đã được ghi nhận.'};
     }
     const now = Date.now();
-    if (transition === 'approve') {
-      if (!staff || record.status !== 'pending' || new Date(record.start_at).getTime() <= now) throw new Error('Chỉ cán bộ được duyệt lịch tương lai đang chờ.');
+    if (transition === 'approve' || transition === 'confirm') {
+      // Keep approve for older staff clients. Owners can confirm pre-upgrade pending records themselves.
+      if ((transition === 'approve' && !staff) || record.status !== 'pending') throw new Error('Chỉ xác nhận lịch cũ chưa giữ chỗ.');
+      inventoryValidateBookingWindow(inventoryDate(record.start_at), inventoryDate(record.end_at), device);
       inventoryCheckCapacity(device, state, Number(record.quantity), record.start_at, record.end_at, record.booking_id);
-      record.status = 'approved'; record.reviewed_by = user.full_name; record.review_note = inventoryText(payload.note);
+      record.status = 'approved'; record.reviewed_by = staff ? user.full_name : ''; record.review_note = staff ? inventoryText(payload.note) : '';
     } else if (transition === 'reject') {
       if (!staff || record.status !== 'pending') throw new Error('Chỉ cán bộ được từ chối lịch chờ duyệt.');
       record.status = 'rejected'; record.reviewed_by = user.full_name; record.review_note = inventoryText(payload.note);
@@ -549,7 +555,7 @@ function inventoryHandle(ss, payload, staff) {
       if (!staff || record.kind === 'block' || record.status !== 'approved' || now < new Date(record.end_at).getTime()) throw new Error('Chỉ cán bộ đánh dấu không đến sau giờ kết thúc.');
       record.status = 'no_show'; record.reviewed_by = user.full_name;
     } else if (transition === 'start') {
-      if (record.kind === 'block' || record.status !== 'approved' || now < new Date(record.start_at).getTime() || now >= new Date(record.end_at).getTime()) throw new Error('Chỉ bắt đầu lịch đã duyệt trong khung giờ đăng ký.');
+      if (record.kind === 'block' || record.status !== 'approved' || now < new Date(record.start_at).getTime() || now >= new Date(record.end_at).getTime()) throw new Error('Chỉ bắt đầu lịch đã đăng ký trong khung giờ sử dụng.');
       inventoryCheckCapacity(device, state, Number(record.quantity), new Date(now).toISOString(), record.end_at, record.booking_id);
       record.status = 'active'; record.actual_start = inventoryNow();
     } else if (transition === 'finish') {

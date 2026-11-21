@@ -303,7 +303,7 @@
   <section v-if="currentViewMode === 'RESOURCES'" class="flex-1 px-4 py-6">
     <div class="max-w-7xl mx-auto space-y-5 resource-ui">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 class="text-2xl font-bold text-white">Lịch sử dụng & phiếu mượn</h1><p class="text-sm text-brand-grayText mt-1">Giờ Việt Nam (UTC+7). Lịch chờ duyệt chưa giữ chỗ.</p></div>
+        <div><h1 class="text-2xl font-bold text-white">Lịch sử dụng & phiếu mượn</h1><p class="text-sm text-brand-grayText mt-1">Giờ Việt Nam (UTC+7). Đăng ký thành công là giữ chỗ ngay, không cần cán bộ duyệt.</p></div>
         <div class="flex gap-2"><button @click="fetchData" :disabled="resourceBusy" class="btn btn-sm bg-white/10 text-white">Làm mới</button><button @click="currentViewMode = 'SHOWROOM'" class="btn btn-sm bg-white/10 text-white">Về danh mục</button></div>
       </div>
       <p v-if="connectionError" role="alert" class="p-4 rounded-xl bg-red-950 text-red-200">{{ connectionError }}</p>
@@ -316,7 +316,7 @@
           <div v-if="!labDevices.length" class="text-sm text-slate-300">Chưa có thiết bị đăng ký tại lab. Cán bộ mở Sửa thiết bị và chọn cách sử dụng tại lab để bắt đầu.</div>
           <div class="flex flex-wrap items-end gap-3">
             <label class="flex-1 min-w-[180px] text-sm text-slate-300">Thiết bị tại lab<select v-model="agendaDeviceId" class="resource-input mt-1"><option value="">Tất cả thiết bị</option><option v-for="d in labDevices" :key="d.device_id" :value="d.device_id">{{ d.device_id }} · {{ d.name }}</option></select></label>
-            <label class="text-sm text-slate-300">Hiển thị<select v-model="agendaFilter" class="resource-input mt-1"><option value="all">Tất cả lịch</option><option value="mine">Lịch của tôi</option><option value="pending">Chờ duyệt</option></select></label>
+            <label class="text-sm text-slate-300">Hiển thị<select v-model="agendaFilter" class="resource-input mt-1"><option value="all">Tất cả lịch</option><option value="mine">Lịch của tôi</option><option value="pending">Lịch cũ chưa giữ chỗ</option></select></label>
             <button @click="openBookingForSelected" :disabled="schemaVersion < 2" class="btn-red-cta px-4 py-2 rounded-xl text-sm font-bold">Đăng ký sử dụng</button>
             <button v-if="canEditDevices && agendaDeviceId" @click="openResourceDialog('block', deviceById(agendaDeviceId))" class="btn bg-amber-400 text-black btn-sm">Chặn lịch</button>
           </div>
@@ -333,18 +333,19 @@
               </button>
             </div>
           </div></div>
-          <p class="text-sm text-brand-grayText">Chọn lịch để xem chi tiết, duyệt hoặc xác nhận sử dụng. Lịch báo lỗi tiếp tục cách ly số lượng đến khi cán bộ xác nhận sửa xong.</p>
+          <p class="text-sm text-brand-grayText">Chọn lịch để xem chi tiết, bắt đầu hoặc kết thúc sử dụng. Lịch báo lỗi tiếp tục cách ly số lượng đến khi cán bộ xác nhận sửa xong.</p>
         </div>
         <div v-if="selectedBooking" class="rounded-2xl border border-brand-border bg-brand-card p-4 space-y-3">
           <div class="flex justify-between gap-3"><h2 class="text-lg font-bold text-white">{{ deviceName(selectedBooking.device_id) }} · {{ selectedBooking.quantity }} chiếc</h2><button @click="selectedBookingId = ''" class="text-sm text-slate-300">Đóng chi tiết</button></div>
           <p class="text-sm text-slate-300">{{ formatResourceDate(selectedBooking.start_at) }} – {{ formatResourceDate(selectedBooking.end_at) }} · {{ selectedBooking.user_name }}</p>
           <p class="text-sm font-bold" :class="bookingStatusTextClass(selectedBooking.status)">{{ bookingStatusLabel(selectedBooking) }}</p>
+          <p v-if="selectedBooking.status === 'pending'" class="text-sm text-amber-200">Lịch này được tạo từ bản cũ và chưa giữ chỗ. Người đứng tên có thể bấm Xác nhận đăng ký để kiểm tra số lượng và giữ chỗ ngay.</p>
           <p class="text-sm text-slate-200 whitespace-pre-line">{{ selectedBooking.purpose }}<br>{{ selectedBooking.note }}</p>
           <p v-if="selectedBooking.review_note" class="text-sm text-amber-200 whitespace-pre-line">Cán bộ: {{ selectedBooking.review_note }}</p>
           <p v-if="selectedBooking.actual_start" class="text-sm text-slate-300">Thực tế: {{ formatResourceDate(selectedBooking.actual_start) }} – {{ selectedBooking.actual_end ? formatResourceDate(selectedBooking.actual_end) : 'Chưa kết thúc' }}</p>
-          <label v-if="canEditDevices" class="block text-sm text-slate-300">Ghi chú duyệt / lý do xử lý<input v-model="resourceReviewNote" maxlength="2000" class="resource-input mt-1"></label>
+          <label v-if="canEditDevices" class="block text-sm text-slate-300">Ghi chú / lý do xử lý<input v-model="resourceReviewNote" maxlength="2000" class="resource-input mt-1"></label>
           <div class="flex flex-wrap gap-2">
-            <button v-for="action in bookingActions(selectedBooking)" :key="action.id" @click="performBookingAction(selectedBooking, action.id)" :disabled="resourceBusy" class="btn btn-sm" :class="action.id === 'start' || action.id === 'approve' ? 'bg-emerald-400 text-black' : 'bg-white/10 text-white'">{{ action.label }}</button>
+            <button v-for="action in bookingActions(selectedBooking)" :key="action.id" @click="performBookingAction(selectedBooking, action.id)" :disabled="resourceBusy" class="btn btn-sm" :class="action.id === 'start' || action.id === 'confirm' ? 'bg-emerald-400 text-black' : 'bg-white/10 text-white'">{{ action.label }}</button>
           </div>
         </div>
         <div v-if="attentionBookings.length" class="rounded-2xl border border-amber-500/30 p-4 space-y-3">
@@ -3167,7 +3168,7 @@
             </label>
           </div>
         </fieldset>
-        <p class="body-6 text-slate-400">Giờ Việt Nam. Đăng ký trọn buổi; buổi đã bắt đầu không nhận đăng ký mới. Máy chủ kiểm tra lại số lượng khi gửi và khi duyệt.</p>
+        <p class="body-6 text-slate-400">Giờ Việt Nam. Đăng ký trọn buổi, giữ chỗ ngay khi thành công. Không cần cán bộ duyệt. Buổi đã bắt đầu không nhận đăng ký mới.</p>
       </template>
       <label v-if="['borrow','booking','block'].includes(resourceDialog.kind)" class="block text-slate-300">{{ resourceDialog.kind === 'block' ? 'Lý do chặn lịch' : 'Mục đích / nhóm sử dụng' }}<input v-model="resourceForm.purpose" :disabled="resourceRetryPending" :aria-invalid="resourceFieldInvalid('purpose')" aria-describedby="resource-validation" maxlength="500" required class="resource-input mt-1" placeholder="Tên đề tài, nhóm và công việc dự kiến"></label>
       <label v-if="['return','finish'].includes(resourceDialog.kind)" class="block text-slate-300">Tình trạng<select v-model="resourceForm.condition" :disabled="resourceRetryPending" class="resource-input mt-1"><option value="good">Hoạt động tốt, đủ phụ kiện</option><option v-if="resourceDialog.kind === 'return'" value="missing">Thiếu phụ kiện</option><option value="faulty">Báo lỗi / Hỏng</option></select></label>
@@ -3756,7 +3757,7 @@ createApp({
     resourceDeviceLabel(d) { if (d.configuration_error) return 'Cần sửa cấu hình'; if (d.service_status === 'maintenance') return 'Bảo trì'; if (d.service_status === 'locked') return 'Đã khóa'; return d.usage_mode === 'lab' ? 'Dùng tại lab' : 'Kho số lượng'; },
     resourceConditionLabel(c) { return {good:'Hoạt động tốt',missing:'Thiếu phụ kiện',faulty:'Báo lỗi / Hỏng'}[c] || c; },
     returnStatusLabel(s) { return {pending:'Chờ kiểm định',approved:'Đã nhập lại kho',rejected:'Đang cách ly',repaired:'Đã sửa và nhập lại kho'}[s] || s; },
-    bookingStatusLabel(b) { const labels={pending:'Chờ duyệt',approved:b.kind === 'block' ? 'Đã chặn lịch' : 'Đã duyệt',active:'Đang sử dụng',completed:'Hoàn thành',cancelled:'Đã hủy',rejected:'Từ chối',no_show:'Không đến',fault_hold:'Báo lỗi · Đang cách ly'}; return b.status === 'active' && new Date(b.end_at).getTime() < this.resourceClock ? 'Đang dùng · Quá giờ' : labels[b.status] || b.status; },
+    bookingStatusLabel(b) { const labels={pending:'Chưa giữ chỗ · Lịch cũ',approved:b.kind === 'block' ? 'Đã chặn lịch' : 'Đã đăng ký',active:'Đang sử dụng',completed:'Hoàn thành',cancelled:'Đã hủy',rejected:'Từ chối',no_show:'Không đến',fault_hold:'Báo lỗi · Đang cách ly'}; return b.status === 'active' && new Date(b.end_at).getTime() < this.resourceClock ? 'Đang dùng · Quá giờ' : labels[b.status] || b.status; },
     bookingBadgeClass(s) { return ['active','approved'].includes(s) ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-100' : ['pending','fault_hold'].includes(s) ? 'border-amber-500/40 bg-amber-500/10 text-amber-100' : 'border-brand-border bg-white/5 text-slate-300'; },
     bookingStatusTextClass(s) { return ['pending','fault_hold'].includes(s) ? 'text-amber-300' : 'text-cyan-300'; },
     bookingMatchesFilters(b) { return (!this.agendaDeviceId || b.device_id === this.agendaDeviceId) && (this.agendaFilter === 'all' || this.agendaFilter === 'mine' && this.isResourceOwner(b) || this.agendaFilter === 'pending' && b.status === 'pending'); },
@@ -3772,7 +3773,7 @@ createApp({
     returnsForLoan(id) { return this.quantityReturns.filter(r => r.loan_id === id); },
     bookingActions(b) {
       const actions = []; const staff = this.canEditDevices, owner = this.isResourceOwner(b); const now=this.resourceClock;
-      if (staff && b.status === 'pending') { if (new Date(b.start_at).getTime() > now) actions.push({id:'approve',label:'Duyệt lịch'}); actions.push({id:'reject',label:'Từ chối'}); }
+      if ((staff || owner) && b.status === 'pending' && new Date(b.start_at).getTime() > now) actions.push({id:'confirm',label:'Xác nhận đăng ký'});
       if ((staff || owner) && ['pending','approved'].includes(b.status)) actions.push({id:'cancel',label:'Hủy lịch'});
       if ((staff || owner) && b.kind !== 'block' && b.status === 'approved' && now >= new Date(b.start_at).getTime() && now < new Date(b.end_at).getTime()) actions.push({id:'start',label:'Bắt đầu sử dụng'});
       if ((staff || owner) && b.status === 'active') actions.push({id:'finish',label:'Kết thúc sử dụng'});

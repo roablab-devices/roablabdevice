@@ -32,9 +32,9 @@ Object.entries(config.computed).forEach(([key,fn])=>Object.defineProperty(app,ke
  app.openDeviceAgenda(app.deviceById('ROBOT'));app.openBookingForSelected();
  Object.assign(app.resourceForm,{quantity:4,purpose:'Thực hành',booking_date:'2026-11-24',booking_session:'morning'});
  assert.equal(app.resourceRangeAvailability,6);assert.equal(app.resourceDialogValid,true);await app.submitResourceDialog();
- const booking=app.bookings[0];assert.equal(booking.status,'pending');app.selectedBookingId=booking.booking_id;
- assert.ok(app.bookingActions(app.selectedBooking).some(a=>a.id==='approve'));
- await app.performBookingAction(app.selectedBooking,'approve');assert.equal(app.selectedBooking.status,'approved');
+ const booking=app.bookings[0];assert.equal(booking.status,'approved');app.selectedBookingId=booking.booking_id;
+ assert.equal(app.bookingStatusLabel(app.selectedBooking),'Đã đăng ký');
+ assert.equal(app.bookingActions(app.selectedBooking).some(a=>a.id==='approve' || a.id==='confirm'),false);
  app.openResourceDialog('booking',app.deviceById('ROBOT'));Object.assign(app.resourceForm,{quantity:3,purpose:'Test trùng',booking_date:'2026-11-24',booking_session:'morning'});
  assert.equal(app.resourceRangeAvailability,2);assert.equal(app.resourceDialogValid,false);app.closeResourceDialog();
  app.agendaAnchor='2026-11-23';assert.equal(app.agendaDays[0].date,'2026-11-23');assert.equal(app.agendaDays[6].date,'2026-11-29');assert.equal(app.agendaDays[1].items.length,1);

@@ -65,6 +65,12 @@ test('Missing purpose, invalid quantity and missing identity are explained',()=>
 test('Maintenance disables both session choices',()=>{
  const{app,device}=setup();device.service_status='maintenance';app.resourceForm.booking_date='2026-11-22';assert.ok(app.resourceSessions.every(s=>/bảo trì/.test(s.reason)));assert.equal(app.resourceDialogValid,false);
 });
+test('Registered bookings need no approval and legacy owners can confirm their own record',()=>{
+ const{app}=setup();const booking={user_id:'sv01',kind:'use',status:'approved',start_at:'2026-11-22T08:00:00+07:00',end_at:'2026-11-22T12:00:00+07:00'};
+ assert.equal(app.bookingStatusLabel(booking),'Đã đăng ký');assert.equal(app.bookingActions(booking).some(a=>['approve','confirm'].includes(a.id)),false);
+ booking.status='pending';assert.match(app.bookingStatusLabel(booking),/Lịch cũ/);assert.ok(app.bookingActions(booking).some(a=>a.id==='confirm'));assert.equal(app.bookingActions(booking).some(a=>a.id==='approve'),false);
+ app.currentStudent={user_id:'sv02'};assert.equal(app.bookingActions(booking).some(a=>a.id==='confirm'),false);
+});
 test('Partial return and finish still require notes for faults',()=>{
  const{app,device}=setup();app.openResourceDialog('return',device,{loan_id:'LN1',outstanding:2});app.resourceForm.condition='faulty';assert.equal(app.resourceFieldInvalid('note'),true);app.resourceForm.note='Lỗi trục';assert.equal(app.resourceDialogValid,true);
  app.openResourceDialog('finish',device,{user_id:'sv01',quantity:1});app.resourceForm.condition='faulty';assert.equal(app.resourceFieldInvalid('note'),true);

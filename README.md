@@ -57,11 +57,13 @@ Nếu cần xử lý dữ liệu trước khi cập nhật mã: trong `Devices`,
 
 1. Bấm **Xem lịch / Đăng ký** trên thiết bị hoặc vào **Lịch sử dụng**, chọn thiết bị.
 2. Xem lịch tuần, chọn **ngày sử dụng**, bấm một trong hai ô **Sáng / Chiều**, nhập số lượng và mục đích/nhóm sử dụng. Không nhập giờ bắt đầu/kết thúc. Mặc định sáng **08:00–12:00**, chiều **13:00–17:00**, theo giờ Việt Nam kể cả máy tính đặt múi giờ khác. Mỗi ô hiện số lượng còn trong toàn bộ buổi cho số lượng đang yêu cầu.
-3. Lịch mới có trạng thái **Chờ duyệt**, chưa giữ chỗ. Cán bộ chọn lịch và bấm **Duyệt lịch**. Máy chủ kiểm tra sức chứa lần nữa trong cùng khóa ghi.
-4. Khi đến lab, chủ lịch hoặc cán bộ bấm **Bắt đầu sử dụng** trong khung giờ đã duyệt. Cuối buổi bấm **Kết thúc sử dụng**, khai báo tình trạng.
-5. Cán bộ có thể từ chối, hủy, đánh dấu không đến sau giờ kết thúc hoặc chặn một phần/toàn bộ số lượng cho lớp học và bảo trì theo lịch.
+3. Bấm **Xác nhận**: máy chủ kiểm tra sức chứa và ghi lịch trong cùng khóa ghi. Thành công sẽ hiện **Đã đăng ký** và **giữ số lượng ngay**, không cần cán bộ duyệt. Nếu hai người tranh số lượng cuối, chỉ yêu cầu còn đủ số lượng tại lúc ghi mới được nhận.
+4. Khi đến lab, chủ lịch hoặc cán bộ bấm **Bắt đầu sử dụng** trong khung giờ đã đăng ký. Cuối buổi bấm **Kết thúc sử dụng**, khai báo tình trạng.
+5. Chủ lịch hoặc cán bộ có thể hủy lịch chưa bắt đầu. Cán bộ có thể đánh dấu không đến sau giờ kết thúc hoặc chặn một phần/toàn bộ số lượng cho lớp học và bảo trì theo lịch.
 
-Luồng: **Chờ duyệt → Đã duyệt → Đang sử dụng → Hoàn thành**. Nhánh khác gồm **Từ chối**, **Đã hủy**, **Không đến**, **Báo lỗi · Đang cách ly**.
+Luồng: **Đã đăng ký → Đang sử dụng → Hoàn thành**. Nhánh khác gồm **Đã hủy**, **Không đến**, **Báo lỗi · Đang cách ly**.
+
+Lịch `pending` từ bản cũ hiển thị **Chưa giữ chỗ · Lịch cũ**. Người đứng tên có thể mở lịch và bấm **Xác nhận đăng ký** để tự giữ chỗ nếu còn đủ số lượng, hoặc hủy và đăng ký lại; không cần cán bộ duyệt. Không tự chuyển toàn bộ lịch cũ sang giữ chỗ vì chúng có thể đang trùng số lượng. Lịch đã qua giờ bắt đầu cần hủy và đặt buổi khác.
 
 Quy tắc vận hành:
 
@@ -70,8 +72,8 @@ Quy tắc vận hành:
 - Sức chứa tính theo lượng dùng đồng thời cao nhất trong toàn bộ khoảng chọn, không cộng nhầm các lịch chỉ nối tiếp nhau. Thời gian nghỉ sau buổi được tính khi kiểm tra trùng.
 - Buổi đang dùng quá giờ chưa kết thúc tiếp tục giữ số lượng; không tự đánh dấu đã bàn giao. Cán bộ cần kiểm tra thực tế, kết thúc hoặc xử lý sự cố trước khi cho nhóm sau bắt đầu.
 - Kết thúc báo hỏng sẽ cách ly toàn bộ số lượng trong buổi đó. Cán bộ xác nhận sửa xong mới giải phóng số lượng. Lịch tương lai có thể cần hủy và đặt lại nếu sự cố làm thiếu sức chứa.
-- **Bảo trì toàn bộ / Khóa sử dụng** ngăn lịch mới và bắt đầu sử dụng. Số bảo trì riêng giảm sức chứa. Các lịch đã duyệt vẫn hiển thị để cán bộ chủ động xử lý.
-- Danh sách **Cần xử lý** đưa cả lịch chờ duyệt, đang dùng, quá giờ và cách ly ngoài tuần đang xem lên để tránh bỏ sót.
+- **Bảo trì toàn bộ / Khóa sử dụng** ngăn lịch mới và bắt đầu sử dụng. Số bảo trì riêng giảm sức chứa. Các lịch đã đăng ký vẫn hiển thị để cán bộ chủ động xử lý.
+- Danh sách **Cần xử lý** đưa cả lịch cũ chưa giữ chỗ, đang dùng, quá giờ và cách ly ngoài tuần đang xem lên để tránh bỏ sót.
 
 Nếu nút **Xác nhận** chưa bấm được, phần **Cần điều chỉnh để xác nhận** liệt kê điều kiện chưa đạt: thiếu mục đích, chưa chọn buổi, số lượng không hợp lệ hoặc buổi không còn nhận đăng ký. Ví dụ lúc 12:33, sáng cùng ngày đã khóa; có thể chọn chiều 13:00–17:00 nếu còn đủ số lượng. Đổi ngày để đăng ký sáng hôm sau. Cả đăng ký sử dụng và chặn lịch đều chọn theo buổi.
 
@@ -105,6 +107,8 @@ API GET bổ sung `schema_version`, `loans`, `quantity_returns`, `bookings`, c�
 
 `booking_create` và `booking_block` gửi `booking_date: "YYYY-MM-DD"` cùng `booking_session: "morning" | "afternoon"`. Máy chủ tự lấy giờ theo thiết bị, kiểm tra ngày/buổi và sức chứa dưới khóa ghi. Yêu cầu cũ gửi `start_at`/`end_at` chỉ được nhận nếu khớp chính xác một buổi đã cấu hình; không còn nhận khung giờ tùy ý. Mã yêu cầu cũ vẫn dùng được để kiểm tra/gửi lại kết quả đã ghi.
 
+Trạng thái lưu trong Sheets/API vẫn dùng `approved` cho lịch đã giữ chỗ để tương thích dữ liệu cũ; giao diện gọi là **Đã đăng ký**. `booking_create` không tạo `pending` nữa. Thao tác `booking_update` với `transition: "confirm"` cho phép chủ lịch hoặc cán bộ giữ chỗ cho yêu cầu cũ sau khi kiểm tra lại thời gian và sức chứa. Endpoint `approve` cũ được giữ cho các phiên cán bộ cũ, không nằm trong luồng đăng ký mới.
+
 Không đổi cách quản lý của thiết bị đang mượn/chờ kiểm định hoặc đã có lịch sử phiếu số lượng/lịch. Tạo mã mới nếu cần chuyển mô hình sau khi đã phát sinh lịch sử. Không xóa loại thiết bị có lịch sử mới; dùng khóa sử dụng để ngừng tiếp nhận. Backend từ chối giảm số lượng làm âm kho hoặc không đủ cho lịch đã duyệt.
 
 Các thao tác ghi dùng [Script Lock](https://developers.google.com/apps-script/reference/lock/lock-service) của cùng dự án Apps Script. Không dùng hai dự án Apps Script độc lập để ghi cùng Spreadsheet, và không sửa số liệu phiếu trực tiếp trong Sheets khi hệ thống đang hoạt động.
@@ -129,7 +133,7 @@ rtk git diff --check
 
 Các bộ kiểm tra backend/frontend dùng môi trường giả lập, không gửi phiếu tới lab thật. Lệnh template tải đúng bản Vue CDN mà website đang khai báo để biên dịch toàn bộ mẫu; không chụp ảnh hoặc kiểm tra hiển thị trên trình duyệt.
 
-Trước khi nhận vận hành, kiểm tra trên bản sao Spreadsheet và Web App thật: hai người mượn số lượng, trả từng phần và kiểm định; hai lịch tranh số lượng cuối; duyệt bằng Admin/Inspector; buổi quá giờ; báo hỏng và sửa; hoạt động trên điện thoại; người không có phiên cán bộ không được duyệt. Chỉ sau đó mới chuyển sang dữ liệu vận hành.
+Trước khi nhận vận hành, kiểm tra trên bản sao Spreadsheet và Web App thật: hai người mượn số lượng, trả từng phần và kiểm định; hai đăng ký tranh số lượng cuối và giữ chỗ ngay; chủ lịch tự xác nhận yêu cầu cũ; buổi quá giờ; báo hỏng và sửa; hoạt động trên điện thoại; người không có phiên cán bộ không được chặn lịch hay sửa thiết bị. Chỉ sau đó mới chuyển sang dữ liệu vận hành.
 
 Giới hạn đã xác nhận trong lần triển khai mã nguồn này: kiểm tra tự động chạy cục bộ; chưa cập nhật Apps Script/Sheets/website đang phát hành và chưa xác nhận giao diện trên trình duyệt thực tế vì browser access host không khả dụng. Chưa có thông báo nhắc lịch tự động hoặc lịch lặp.
 
