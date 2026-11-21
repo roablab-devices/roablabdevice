@@ -72,6 +72,8 @@ Quy tắc vận hành:
 - **Bảo trì toàn bộ / Khóa sử dụng** ngăn lịch mới và bắt đầu sử dụng. Số bảo trì riêng giảm sức chứa. Các lịch đã duyệt vẫn hiển thị để cán bộ chủ động xử lý.
 - Danh sách **Cần xử lý** đưa cả lịch chờ duyệt, đang dùng, quá giờ và cách ly ngoài tuần đang xem lên để tránh bỏ sót.
 
+Nếu nút **Xác nhận** chưa bấm được, phần **Cần điều chỉnh để xác nhận** trong form liệt kê các điều kiện chưa đạt: thiếu thông tin, ngoài giờ mở cửa, quá thời lượng, giờ bắt đầu đã qua hoặc thiếu số lượng trong khung giờ. Ví dụ chọn 12:03–18:03 khi máy giới hạn 240 phút và đóng cửa 18:00 sẽ hiện cả lỗi 360 phút và kết thúc muộn. Khi giờ bắt đầu còn ở tương lai, nút gợi ý có thể đặt kết thúc 16:03. Đây là điều chỉnh giờ của phiếu đăng ký; giới hạn thiết bị vẫn do cán bộ cấu hình.
+
 ## Dữ liệu và tương thích
 
 Giữ nguyên cột A–M của `Devices`, `Users` và `Logs`. Thêm vào `Devices`:
@@ -112,6 +114,7 @@ rtk node tests/inventory-booking.cjs
 rtk node tests/inventory-hours.cjs
 rtk node tests/frontend-live.cjs
 rtk node tests/frontend-resources.cjs
+rtk node tests/frontend-validation.cjs
 rtk node tests/frontend-template.cjs
 rtk git diff --check
 ```
