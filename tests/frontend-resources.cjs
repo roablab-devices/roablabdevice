@@ -43,6 +43,12 @@ Object.entries(config.computed).forEach(([key,fn])=>Object.defineProperty(app,ke
  await app.performBookingAction(app.selectedBooking,'finish');assert.equal(app.resourceDialog.kind,'finish');app.resourceForm.condition='faulty';assert.equal(app.resourceDialogValid,false);app.resourceForm.note='Báo lỗi truyền động';assert.equal(app.resourceDialogValid,true);await app.submitResourceDialog();assert.equal(app.selectedBooking.status,'fault_hold');
  app.openAddDeviceModal();assert.equal(app.deviceForm.total_quantity,1);assert.equal(app.deviceForm.usage_mode,'portable');app.openEditDeviceModal(app.deviceById('ROBOT'));assert.equal(app.deviceForm.total_quantity,6);assert.equal(app.deviceForm.usage_mode,'lab');
  app.adminStudentSearch='An';assert.ok(app.adminStudentResults[0].borrowed_devices.some(d=>d.device_id==='MOTOR'));
+ const bad=h.rows.Devices.find(r=>r[0]==='ROBOT');bad[18]='18:00';bad[19]='08:00';
+ await app.fetchData();assert.equal(app.connectionError,'');assert.equal(app.invalidConfigurationDevices.length,1);assert.equal(app.devices.length,3);
+ const invalid=app.deviceById('ROBOT');assert.equal(app.isDeviceAvailable(invalid),false);assert.equal(app.resourceDeviceLabel(invalid),'Cần sửa cấu hình');
+ app.resourceDialog=null;app.openResourceDialog('booking',invalid);assert.equal(app.resourceDialog,null,'Invalid configuration blocks booking');
+ app.openEditDeviceModal(invalid);Object.assign(app.deviceForm,{open_hour:'08:00',close_hour:'18:00',accessories:'Nguồn, Cáp'});
+ await app.saveDeviceAsAdmin();assert.equal(app.invalidConfigurationDevices.length,0,'Staff can repair the invalid row through the UI');assert.equal(app.deviceById('ROBOT').open_hour,'08:00');
  app.inputMssv='';app.checkStudentWhitelist();app.openResourceDialog('borrow',app.deviceById('MOTOR'));assert.equal(app.currentStudent,null);
- console.log('PASS: frontend/backend quantity, partial return, QA, retry, booking, filters and staff-session integration');
+ console.log('PASS: frontend/backend quantity, partial return, QA, retry, booking, filters, staff session and invalid-hours recovery');
 })().catch(e=>{console.error(e);process.exitCode=1;});

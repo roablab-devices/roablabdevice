@@ -43,6 +43,16 @@ Ví dụ tổng 20, đang mượn 7, chờ kiểm định 2, cách ly 1, bảo t
 
 Các số đang mượn/chờ kiểm định/cách ly được tính từ phiếu, không sửa bằng một ô đếm thủ công. Nếu hoàn trả có cả đồ tốt và hỏng, lập các lần trả riêng theo tình trạng. Kiểm định/sửa chữa áp dụng cho toàn bộ số lượng của một lần trả.
 
+## Khắc phục lỗi giờ mở cửa khi tải dữ liệu
+
+Nếu Web App trả `Lỗi doGet: Error: Giờ mở cửa phải trước giờ đóng cửa trong cùng ngày`, bản cũ có thể đang đọc ô giờ của Sheets thành chuỗi ngày đầy đủ thay vì `HH:mm`. Theo [tài liệu Range.getValues của Google](https://developers.google.com/apps-script/reference/spreadsheet/range#getValues()), giá trị ô có thể là `Date`, `Number` hoặc `String`; không thể giả định luôn là chuỗi giờ.
+
+Bản này chuẩn hóa ô giờ Date theo múi giờ Spreadsheet, số biểu diễn phần ngày và các chuỗi như `8:00`, `08:00:00`, `6:00 PM`. Khi lưu/nâng cấp cấu hình, giờ ở cột S–T được ghi dưới dạng văn bản `HH:mm`. Nếu giờ thực sự sai, thiết bị đó hiển thị **Cần sửa cấu hình**, kèm mã thiết bị và dòng Sheets; danh mục còn lại vẫn tải. Thiết bị lỗi không được đăng ký/mượn mới đến khi sửa.
+
+Để áp dụng: thay `Code.gs` rồi cập nhật deployment Web App sang phiên bản mới. Cập nhật `index.html` để thấy thông báo và nút sửa cấu hình. Không cần tạo lại hoặc xóa các sheet hiện có. Có thể chạy lại `upgradeInventorySchema` để chuẩn hóa các ô giờ hợp lệ, nhưng không tự thay đổi giờ mở cửa/đóng cửa thực sự bị nhập ngược.
+
+Nếu cần xử lý dữ liệu trước khi cập nhật mã: trong `Devices`, chọn ô giờ tại cột **S (`open_hour`)** và **T (`close_hour`)**, đặt định dạng **Plain text / Văn bản thuần túy**, rồi nhập lại giờ đúng theo quy định lab, ví dụ `08:00` và `18:00`. Chỉ đổi định dạng mà không nhập lại có thể vẫn giữ giá trị ngày/giờ cũ. Nếu giờ đóng thực sự không sau giờ mở, cần sửa dữ liệu đó.
+
 ## Đăng ký robot và thiết bị cố định
 
 1. Bấm **Xem lịch / Đăng ký** trên thiết bị hoặc vào **Lịch sử dụng**, chọn thiết bị.
@@ -99,13 +109,14 @@ Chạy trong thư mục dự án với Node.js 18 trở lên:
 ```powershell
 rtk node tests/backend-security.cjs
 rtk node tests/inventory-booking.cjs
+rtk node tests/inventory-hours.cjs
 rtk node tests/frontend-live.cjs
 rtk node tests/frontend-resources.cjs
 rtk node tests/frontend-template.cjs
 rtk git diff --check
 ```
 
-Bốn lệnh đầu dùng môi trường giả lập, không gửi phiếu tới lab thật. Lệnh template tải đúng bản Vue CDN mà website đang khai báo để biên dịch toàn bộ mẫu; không chụp ảnh hoặc kiểm tra hiển thị trên trình duyệt.
+Các bộ kiểm tra backend/frontend dùng môi trường giả lập, không gửi phiếu tới lab thật. Lệnh template tải đúng bản Vue CDN mà website đang khai báo để biên dịch toàn bộ mẫu; không chụp ảnh hoặc kiểm tra hiển thị trên trình duyệt.
 
 Trước khi nhận vận hành, kiểm tra trên bản sao Spreadsheet và Web App thật: hai người mượn số lượng, trả từng phần và kiểm định; hai lịch tranh số lượng cuối; duyệt bằng Admin/Inspector; buổi quá giờ; báo hỏng và sửa; hoạt động trên điện thoại; người không có phiên cán bộ không được duyệt. Chỉ sau đó mới chuyển sang dữ liệu vận hành.
 

@@ -159,12 +159,55 @@ function inventoryDate(value) {
   if (new Date(date.getTime() + offset).toISOString().slice(0, 16) !== localPart) throw new Error('Ngày giờ không tồn tại.');
   return date.toISOString();
 }
+function inventoryHour(value, fallback, label) {
+  if (value == null || typeof value === 'string' && !value.trim()) return fallback;
+  let hour, minute;
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    if (!Number.isFinite(value.getTime())) throw new Error(label + ' không hợp lệ.');
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const zone = typeof ss.getSpreadsheetTimeZone === 'function' ? ss.getSpreadsheetTimeZone() : 'Asia/Ho_Chi_Minh';
+    // A Sheets time cell is a Date, often based in 1899. Read its wall-clock time
+    // in the spreadsheet timezone, not the script/server timezone.
+    return Utilities.formatDate(value, zone, 'HH:mm');
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0 || value >= 1) throw new Error(label + ' phải là giờ HH:mm hoặc ô giờ trong Sheets.');
+    const minutes = Math.floor(value * 1440 + 0.0000001);
+    hour = Math.floor(minutes / 60); minute = minutes % 60;
+  } else {
+    const text = String(value).trim().replace(/^'/, '').trim();
+    const match = text.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(AM|PM)?$/i);
+    if (!match || Number(match[2]) > 59 || match[3] && Number(match[3]) > 59) throw new Error(label + ' phải có định dạng HH:mm, ví dụ 08:00.');
+    hour = Number(match[1]); minute = Number(match[2]);
+    if (match[4]) {
+      if (hour < 1 || hour > 12) throw new Error(label + ' không hợp lệ.');
+      hour = hour % 12 + (match[4].toUpperCase() === 'PM' ? 12 : 0);
+    }
+    if (hour > 23) throw new Error(label + ' không hợp lệ.');
+  }
+  return ('0' + hour).slice(-2) + ':' + ('0' + minute).slice(-2);
+}
+function inventoryDisplayConfig(row) {
+  // Keep malformed saved fields visible for staff to repair. This object is only
+  // for display: every operation still validates inventoryConfig under the lock.
+  const value = (index, fallback) => row[index] == null || row[index] === '' ? fallback : String(row[index]).trim();
+  const hour = (index, fallback, label) => {
+    try { return inventoryHour(row[index], fallback, label); }
+    catch (_) { return value(index, fallback); }
+  };
+  return {
+    usage_mode: value(13, 'portable'), tracking_mode: value(14, 'individual'),
+    total_quantity: value(15, 1), unavailable_quantity: value(16, 0),
+    service_status: value(17, 'ready'), open_hour: hour(18, '08:00', 'Giờ mở cửa'), close_hour: hour(19, '18:00', 'Giờ đóng cửa'),
+    max_minutes: value(20, 240), buffer_minutes: value(21, 0)
+  };
+}
 function inventoryConfig(row) {
   const config = {
     usage_mode: String(row[13] || 'portable'), tracking_mode: String(row[14] || 'individual'),
     total_quantity: row[15] === '' || row[15] == null ? 1 : inventoryInt(row[15], 1, 100000),
     unavailable_quantity: row[16] === '' || row[16] == null ? 0 : inventoryInt(row[16], 0, 100000),
-    service_status: String(row[17] || 'ready'), open_hour: String(row[18] || '08:00'), close_hour: String(row[19] || '18:00'),
+    service_status: String(row[17] || 'ready'), open_hour: inventoryHour(row[18], '08:00', 'Giờ mở cửa'), close_hour: inventoryHour(row[19], '18:00', 'Giờ đóng cửa'),
     max_minutes: row[20] === '' || row[20] == null ? 240 : inventoryInt(row[20], 15, 1440),
     buffer_minutes: row[21] === '' || row[21] == null ? 0 : inventoryInt(row[21], 0, 120)
   };
@@ -183,6 +226,11 @@ function inventorySchemaReady(ss) {
     const head = table && table.getDataRange().getValues()[0];
     return head && INVENTORY_TABLES[name].every((h, i) => head[i] === h);
   });
+}
+function inventoryWriteConfig(sheet, rowIndex, config) {
+  const hours = sheet.getRange(rowIndex, 19, 1, 2);
+  if (typeof hours.setNumberFormat === 'function') hours.setNumberFormat('@');
+  setTextMatrix(sheet, rowIndex, 14, [INVENTORY_DEVICE_HEADERS.map(h => config[h])]);
 }
 function upgradeInventorySchema() {
   const lock = LockService.getScriptLock();
@@ -205,12 +253,15 @@ function inventoryUpgrade(ss) {
       if (!INVENTORY_TABLES[name].every((h, i) => head[i] === h)) throw new Error('Sheet ' + name + ' đã tồn tại với cấu trúc khác.');
     }
   });
-  rows.slice(1).filter(row => row[0]).forEach(inventoryConfig);
+  rows.slice(1).filter(row => row[0]).forEach(row => {
+    try { inventoryConfig(row); }
+    catch (error) { throw new Error('Thiết bị [' + row[0] + ']: ' + error.message); }
+  });
   setTextMatrix(sheet, 1, 14, [INVENTORY_DEVICE_HEADERS]);
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i][0]) continue;
     const config = inventoryConfig(rows[i]);
-    setTextMatrix(sheet, i + 1, 14, [INVENTORY_DEVICE_HEADERS.map(h => config[h])]);
+    inventoryWriteConfig(sheet, i + 1, config);
   }
   Object.keys(INVENTORY_TABLES).forEach(name => {
     let table = ss.getSheetByName(name);
@@ -337,7 +388,9 @@ function inventoryValidateDeviceChange(ss, payload, oldRow) {
   INVENTORY_DEVICE_HEADERS.forEach((h, i) => { if (payload[h] != null) draft[13 + i] = payload[h]; });
   const config = inventoryConfig(draft);
   if (!oldRow) return config;
-  const old = inventoryConfig(oldRow);
+  // Validate the proposed configuration, not the malformed previous hours;
+  // otherwise staff could never save a repair through the UI.
+  const old = {usage_mode: String(oldRow[13] || 'portable'), tracking_mode: String(oldRow[14] || 'individual')};
   const state = inventoryState(ss);
   const id = String(oldRow[0]);
   const history = state.loans.some(r => r.device_id === id) || state.bookings.some(r => r.device_id === id);
@@ -556,10 +609,13 @@ function doGet(e) {
       const deviceId = String(row[0] || "").trim();
       if (!deviceId) continue;
       
-      const deviceConfig = inventoryConfig(row);
+      let deviceConfig, configurationError = '';
+      try { deviceConfig = inventoryConfig(row); }
+      catch (error) { deviceConfig = inventoryDisplayConfig(row); configurationError = error.message; }
       let stock = null;
-      if (deviceConfig.usage_mode === 'portable' && deviceConfig.tracking_mode === 'quantity') stock = inventorySummary({config: deviceConfig, device_id: deviceId}, inventory);
-      if (deviceConfig.usage_mode === 'lab') {
+      if (configurationError) stock = {total: Number(deviceConfig.total_quantity) || 0, available: 0, unavailable: true};
+      if (!configurationError && deviceConfig.usage_mode === 'portable' && deviceConfig.tracking_mode === 'quantity') stock = inventorySummary({config: deviceConfig, device_id: deviceId}, inventory);
+      if (!configurationError && deviceConfig.usage_mode === 'lab') {
         const faulty = inventory.bookings.filter(r => r.device_id === deviceId && r.status === 'fault_hold').reduce((sum, r) => sum + Number(r.quantity), 0);
         const busy = inventoryPeak(inventory.bookings, {config: deviceConfig, device_id: deviceId}, inventoryNow(), new Date(Date.now() + 1000).toISOString(), '', Date.now());
         stock = {total: deviceConfig.total_quantity, borrowed: busy, pending: 0, faulty, maintenance: deviceConfig.unavailable_quantity, available: deviceConfig.service_status === 'ready' ? Math.max(0, deviceConfig.total_quantity - deviceConfig.unavailable_quantity - faulty - busy) : 0};
@@ -567,6 +623,8 @@ function doGet(e) {
       devices.push({
         ...deviceConfig,
         stock,
+        configuration_error: configurationError,
+        configuration_row: i + 1,
         device_id: deviceId,
         name: String(row[1] || ""),
         category: String(row[2] || "Khác"),
@@ -781,7 +839,7 @@ function doPost(e) {
         ]];
         setTextMatrix(devSheet, foundRow, 2, rowUpdates);
         setText(devSheet.getRange(foundRow, 13), nowStr);
-        if (hasConfig) setTextMatrix(devSheet, foundRow, 14, [INVENTORY_DEVICE_HEADERS.map(h => savedConfig[h])]);
+        if (hasConfig) inventoryWriteConfig(devSheet, foundRow, savedConfig);
 
         // Ghi log chỉnh sửa
         if (logSheet) {
@@ -822,6 +880,7 @@ function doPost(e) {
           nowStr,
           ...(hasConfig ? INVENTORY_DEVICE_HEADERS.map(h => savedConfig[h]) : [])
         ]);
+        if (hasConfig) inventoryWriteConfig(devSheet, devSheet.getLastRow(), savedConfig);
 
         // Ghi log thêm mới
         if (logSheet) {

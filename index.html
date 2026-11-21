@@ -278,6 +278,12 @@
     </div>
   </header>
 
+  <div v-if="invalidConfigurationDevices.length" class="px-4 py-3 border-b border-amber-500/40 bg-amber-950/30 text-amber-200 text-sm" role="status">
+    <details class="max-w-7xl mx-auto"><summary class="cursor-pointer font-bold">Có {{ invalidConfigurationDevices.length }} thiết bị cần sửa cấu hình. Các thiết bị khác vẫn tải bình thường.</summary>
+      <ul class="mt-3 space-y-2"><li v-for="d in invalidConfigurationDevices" :key="d.device_id" class="flex flex-wrap items-center gap-2"><span>{{ d.device_id }} · Devices, dòng {{ d.configuration_row }}: {{ d.configuration_error }}</span><button v-if="canEditDevices" @click="openEditDeviceModal(d)" class="btn btn-sm bg-amber-300 text-black">Sửa cấu hình</button></li></ul>
+    </details>
+  </div>
+
   <div class="border-b border-brand-border bg-brand-card px-4 py-3">
     <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
       <p class="text-sm text-slate-300">Mượn linh kiện theo số lượng · Đăng ký robot và thiết bị tại lab</p>
@@ -723,7 +729,8 @@
               </div>
 
               <div>
-                <span v-if="device.service_status && device.service_status !== 'ready' || device.unavailable_quantity && device.tracking_mode !== 'quantity'" class="text-sm font-bold text-amber-300">{{ device.service_status === 'locked' ? 'Đã khóa' : 'Bảo trì' }}</span>
+                <span v-if="device.configuration_error" class="text-sm font-bold text-amber-300">Cần sửa cấu hình</span>
+                <span v-else-if="device.service_status && device.service_status !== 'ready' || device.unavailable_quantity && device.tracking_mode !== 'quantity'" class="text-sm font-bold text-amber-300">{{ device.service_status === 'locked' ? 'Đã khóa' : 'Bảo trì' }}</span>
                 <span v-else-if="isManagedResource(device)" class="text-sm font-bold text-cyan-300">{{ resourceDeviceLabel(device) }}</span>
                 <span v-else-if="device.status === 'Trong kho'" class="text-[10px] font-oswald uppercase font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5">
                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -793,7 +800,8 @@
               </div>
             </div>
 
-            <div v-if="device.stock" class="mx-4 mb-3 p-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm space-y-2">
+            <p v-if="device.configuration_error" class="mx-4 mb-3 p-3 rounded-xl border border-amber-500/30 text-amber-200 text-sm">{{ device.configuration_error }} Cán bộ cần kiểm tra cấu hình của thiết bị này.</p>
+            <div v-if="device.stock && !device.configuration_error" class="mx-4 mb-3 p-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm space-y-2">
               <div class="flex justify-between text-white"><strong>{{ device.usage_mode === 'lab' ? 'Trống hiện tại' : 'Có thể mượn' }}</strong><strong class="text-cyan-300">{{ device.stock.available }} / {{ device.stock.total }}</strong></div>
               <p class="text-slate-300">{{ device.usage_mode === 'lab' ? 'Đã giữ chỗ / đang dùng' : 'Đang mượn' }}: {{ device.stock.borrowed }} · Chờ kiểm tra: {{ device.stock.pending }} · Cách ly: {{ device.stock.faulty }} · Bảo trì: {{ device.stock.maintenance }}</p>
               <p v-if="device.usage_mode === 'lab'" class="text-brand-grayText">{{ device.open_hour }}–{{ device.close_hour }} · Tối đa {{ device.max_minutes }} phút/buổi. Xem lịch để chọn giờ.</p>
@@ -836,7 +844,11 @@
 
               <div>
                 <button 
-                  v-if="isManagedResource(device)"
+                  v-if="device.configuration_error"
+                  disabled class="text-amber-300 text-sm px-3 py-2">Cần sửa cấu hình
+                </button>
+                <button
+                  v-else-if="isManagedResource(device)"
                   @click="device.usage_mode === 'lab' ? openDeviceAgenda(device) : openResourceDialog('borrow', device)"
                   :disabled="schemaVersion < 2 || (device.usage_mode !== 'lab' && (!device.stock || device.stock.available < 1))"
                   class="btn-red-cta px-3 py-2 rounded-lg font-bold text-sm disabled:opacity-50">
@@ -3514,6 +3526,7 @@ createApp({
     };
   },
   computed: {
+    invalidConfigurationDevices() { return this.devices.filter(d => !!d.configuration_error); },
     resourceTabs() { return [{id:'AGENDA',label:'Lịch sử dụng'}, {id:'LOANS',label:'Phiếu mượn số lượng'}, ...(this.canEditDevices ? [{id:'QA',label:'Kiểm định số lượng (' + this.quantityReturns.filter(r => r.audit_status === 'pending').length + ')'}] : [])]; },
     labDevices() { return this.devices.filter(d => d.usage_mode === 'lab'); },
     selectedBooking() { return this.bookings.find(b => b.booking_id === this.selectedBookingId) || null; },
@@ -3600,7 +3613,7 @@ createApp({
       return this.devices.filter(d => d.stock ? d.stock.borrowed > 0 : d.status === 'Đang mượn').length;
     },
     faultyCount() {
-      return this.devices.filter(d => d.service_status && d.service_status !== 'ready' || (d.stock ? d.stock.faulty > 0 || d.stock.maintenance > 0 : d.status === 'Báo lỗi/Khóa')).length;
+      return this.devices.filter(d => d.configuration_error || d.service_status && d.service_status !== 'ready' || (d.stock ? d.stock.faulty > 0 || d.stock.maintenance > 0 : d.status === 'Báo lỗi/Khóa')).length;
     },
     pendingAuditCount() {
       return this.auditQueue.filter(a => !a.audit_status || a.audit_status === 'Chờ kiểm định').length;
@@ -3618,7 +3631,7 @@ createApp({
         } else if (this.activeStatusFilter === 'IN_STOCK') {
           if (!this.isDeviceAvailable(d)) return false;
         } else if (this.activeStatusFilter === 'FAULTY') {
-          if (!(d.status === 'Báo lỗi/Khóa' || d.service_status && d.service_status !== 'ready' || d.stock && (d.stock.faulty > 0 || d.stock.maintenance > 0))) return false;
+          if (!(d.configuration_error || d.status === 'Báo lỗi/Khóa' || d.service_status && d.service_status !== 'ready' || d.stock && (d.stock.faulty > 0 || d.stock.maintenance > 0))) return false;
         }
 
         if (this.selectedCategory !== 'Tất cả' && d.category !== this.selectedCategory) return false;
@@ -3682,9 +3695,9 @@ createApp({
     deviceById(id) { return this.devices.find(d => d.device_id === id); },
     deviceName(id) { const d = this.deviceById(id); return d ? d.name : id; },
     isManagedResource(d) { return d.usage_mode === 'lab' || d.tracking_mode === 'quantity'; },
-    isDeviceAvailable(d) { return d.stock ? d.stock.available > 0 : d.status === 'Trong kho' && (!d.service_status || d.service_status === 'ready') && !d.unavailable_quantity; },
+    isDeviceAvailable(d) { return !d.configuration_error && (d.stock ? d.stock.available > 0 : d.status === 'Trong kho' && (!d.service_status || d.service_status === 'ready') && !d.unavailable_quantity); },
     isResourceOwner(record) { return !!this.currentStudent && String(record.user_id).toLowerCase() === String(this.currentStudent.user_id).toLowerCase(); },
-    resourceDeviceLabel(d) { if (d.service_status === 'maintenance') return 'Bảo trì'; if (d.service_status === 'locked') return 'Đã khóa'; return d.usage_mode === 'lab' ? 'Dùng tại lab' : 'Kho số lượng'; },
+    resourceDeviceLabel(d) { if (d.configuration_error) return 'Cần sửa cấu hình'; if (d.service_status === 'maintenance') return 'Bảo trì'; if (d.service_status === 'locked') return 'Đã khóa'; return d.usage_mode === 'lab' ? 'Dùng tại lab' : 'Kho số lượng'; },
     resourceConditionLabel(c) { return {good:'Hoạt động tốt',missing:'Thiếu phụ kiện',faulty:'Báo lỗi / Hỏng'}[c] || c; },
     returnStatusLabel(s) { return {pending:'Chờ kiểm định',approved:'Đã nhập lại kho',rejected:'Đang cách ly',repaired:'Đã sửa và nhập lại kho'}[s] || s; },
     bookingStatusLabel(b) { const labels={pending:'Chờ duyệt',approved:b.kind === 'block' ? 'Đã chặn lịch' : 'Đã duyệt',active:'Đang sử dụng',completed:'Hoàn thành',cancelled:'Đã hủy',rejected:'Từ chối',no_show:'Không đến',fault_hold:'Báo lỗi · Đang cách ly'}; return b.status === 'active' && new Date(b.end_at).getTime() < this.resourceClock ? 'Đang dùng · Quá giờ' : labels[b.status] || b.status; },
@@ -3713,6 +3726,7 @@ createApp({
     },
     openResourceDialog(kind, device, record = null) {
       if (!device || this.schemaVersion < 2) { this.showToast('Cập nhật Apps Script và nâng cấp dữ liệu trước.', 'error'); return; }
+      if (device.configuration_error && ['borrow','booking','block'].includes(kind)) { this.showToast('Cán bộ cần sửa cấu hình: ' + device.configuration_error, 'error'); return; }
       if (!['block','finish'].includes(kind) && !this.currentStudent) { this.showToast('Nhập MSSV được cấp phép ở thanh trên cùng trước.', 'error'); return; }
       if (kind === 'block' && !this.canEditDevices) return;
       this.resourceDialog = {kind,device,record,user_id:this.currentStudent ? this.currentStudent.user_id : ''}; this.resourceForm = {quantity:1,purpose:'',start_at:'',end_at:'',condition:'good',note:''};
