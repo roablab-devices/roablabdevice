@@ -9,7 +9,8 @@ function setup(status = 'Trong kho', holder = '') {
   const logs = [['header']];
   const users = [['ID','PIN','Name','Phone','Role','Khóa'],
     ['admin','old-admin-pin','Admin','','ADMIN'],
-    ['inspector','old-inspector-pin','Inspector','','INSPECTOR']];
+    ['inspector','old-inspector-pin','Inspector','','INSPECTOR'],
+    ['sv01','','An','','STUDENT'], ['sv02','','Binh','','STUDENT']];
   const cache = new Map();
   const uploaded = [];
   function sheet(rows) {
@@ -29,7 +30,7 @@ function setup(status = 'Trong kho', holder = '') {
     LockService: {getScriptLock: () => ({waitLock() {}, releaseLock() {}})},
     CacheService: {getScriptCache: () => ({get: k => cache.get(k), put: (k,v) => cache.set(k,v), remove: k => cache.delete(k)})},
     ContentService: {MimeType: {JSON: 'json'}, createTextOutput: text => ({setMimeType: () => JSON.parse(text)})},
-    Utilities: {formatDate: () => '2026-11-03', getUuid: () => 'test-id',
+    Utilities: {DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'utf8'},computeDigest:(algorithm,value)=>Array.from(require('node:crypto').createHash('sha256').update(value).digest()),formatDate: () => '2026-11-03', getUuid: () => 'test-id',
       base64Decode: text => {
         const buf = Buffer.from(text, 'base64');
         const obj = { length: buf.length };
@@ -45,8 +46,9 @@ function setup(status = 'Trong kho', holder = '') {
       }}), getRootFolder: () => {throw Error('Unexpected upload');}}
   });
   vm.runInContext(source, ctx);
+  const staffSession = ctx.inventorySession({user_id:'admin'});
   return {ctx, devices, logs, users, uploaded, writes: () => writes,
-    post: p => ctx.doPost({postData: {contents: JSON.stringify(p)}})};
+    post: p => ctx.doPost({postData: {contents: JSON.stringify({...p, ...(['admin_save_device','admin_delete_device','audit_transaction','admin_unlock'].includes(p.action) ? {staff_session:staffSession} : {})})}})};
 }
 const base = {action:'transaction', tx_type:'Mượn mới', user_id:'sv01', user_name:'An', device_ids:['D1']};
 function rejected(status, holder, extra) {

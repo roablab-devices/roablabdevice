@@ -127,6 +127,366 @@ function uploadDeviceFiles(payload) {
   }
 }
 
+// Inventory v2. This source is embedded in Code.gs for one-file Apps Script deployment.
+const INVENTORY_DEVICE_HEADERS = ['usage_mode', 'tracking_mode', 'total_quantity', 'unavailable_quantity', 'service_status', 'open_hour', 'close_hour', 'max_minutes', 'buffer_minutes'];
+const INVENTORY_TABLES = {
+  Loans: ['loan_id', 'device_id', 'user_id', 'user_name', 'quantity', 'purpose', 'note', 'created_at', 'request_id', 'request_hash'],
+  Returns: ['return_id', 'loan_id', 'device_id', 'user_id', 'user_name', 'quantity', 'condition', 'note', 'created_at', 'audit_status', 'audited_by', 'audit_note', 'audited_at', 'repaired_by', 'repaired_at', 'request_id', 'request_hash'],
+  Bookings: ['booking_id', 'device_id', 'user_id', 'user_name', 'quantity', 'start_at', 'end_at', 'purpose', 'note', 'status', 'created_at', 'updated_at', 'reviewed_by', 'review_note', 'actual_start', 'actual_end', 'end_condition', 'request_id', 'kind', 'request_hash', 'transition_request_id', 'transition_hash']
+};
+
+function inventoryKey(value) { return String(value || '').trim().toLowerCase(); }
+function inventoryText(value, max) {
+  const text = String(value == null ? '' : value).trim();
+  if (text.length > (max || 2000)) throw new Error('Nội dung quá dài.');
+  return text;
+}
+function inventoryInt(value, min, max) {
+  if (value === '' || value == null || typeof value === 'boolean' || !/^\d+$/.test(String(value))) throw new Error('Số lượng/thời lượng phải là số nguyên hợp lệ.');
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < min || number > max) throw new Error('Số lượng/thời lượng nằm ngoài giới hạn cho phép.');
+  return number;
+}
+function inventoryNow() { return new Date().toISOString(); }
+function inventoryId(prefix) { return prefix + '-' + Utilities.getUuid(); }
+function inventoryDate(value) {
+  const text = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?(?:Z|\+07:00)$/.test(text)) throw new Error('Thời gian phải kèm múi giờ Việt Nam hoặc UTC.');
+  const date = new Date(text);
+  if (!Number.isFinite(date.getTime())) throw new Error('Ngày giờ không hợp lệ.');
+  const localPart = text.replace(/(?:Z|\+07:00)$/, '').slice(0, 16);
+  const offset = text.endsWith('Z') ? 0 : 7 * 3600000;
+  if (new Date(date.getTime() + offset).toISOString().slice(0, 16) !== localPart) throw new Error('Ngày giờ không tồn tại.');
+  return date.toISOString();
+}
+function inventoryConfig(row) {
+  const config = {
+    usage_mode: String(row[13] || 'portable'), tracking_mode: String(row[14] || 'individual'),
+    total_quantity: row[15] === '' || row[15] == null ? 1 : inventoryInt(row[15], 1, 100000),
+    unavailable_quantity: row[16] === '' || row[16] == null ? 0 : inventoryInt(row[16], 0, 100000),
+    service_status: String(row[17] || 'ready'), open_hour: String(row[18] || '08:00'), close_hour: String(row[19] || '18:00'),
+    max_minutes: row[20] === '' || row[20] == null ? 240 : inventoryInt(row[20], 15, 1440),
+    buffer_minutes: row[21] === '' || row[21] == null ? 0 : inventoryInt(row[21], 0, 120)
+  };
+  if (!['portable', 'lab'].includes(config.usage_mode) || !['individual', 'quantity'].includes(config.tracking_mode) || !['ready', 'maintenance', 'locked'].includes(config.service_status)) throw new Error('Cấu hình thiết bị không hợp lệ.');
+  if (config.tracking_mode === 'individual' && config.total_quantity !== 1) throw new Error('Thiết bị có mã riêng phải có số lượng bằng 1.');
+  if (config.unavailable_quantity > config.total_quantity) throw new Error('Số lượng bảo trì vượt tổng số lượng.');
+  if (![config.open_hour, config.close_hour].every(v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v)) || config.open_hour >= config.close_hour) throw new Error('Giờ mở cửa phải trước giờ đóng cửa trong cùng ngày.');
+  return config;
+}
+function inventorySchemaReady(ss) {
+  const sheet = ss.getSheetByName(CONFIG.SHEET_DEVICES);
+  if (!sheet) return false;
+  const headers = sheet.getDataRange().getValues()[0] || [];
+  return INVENTORY_DEVICE_HEADERS.every((h, i) => headers[13 + i] === h) && Object.keys(INVENTORY_TABLES).every(name => {
+    const table = ss.getSheetByName(name);
+    const head = table && table.getDataRange().getValues()[0];
+    return head && INVENTORY_TABLES[name].every((h, i) => head[i] === h);
+  });
+}
+function upgradeInventorySchema() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try { return inventoryUpgrade(SpreadsheetApp.getActiveSpreadsheet()); }
+  finally { SpreadsheetApp.flush(); lock.releaseLock(); }
+}
+function inventoryUpgrade(ss) {
+  const sheet = ss.getSheetByName(CONFIG.SHEET_DEVICES);
+  if (!sheet) throw new Error('Chạy initialSetup hoặc tạo sheet Devices trước.');
+  const rows = sheet.getDataRange().getValues();
+  // Preflight every header before writing. Never repurpose existing custom columns.
+  INVENTORY_DEVICE_HEADERS.forEach((header, i) => {
+    if (rows[0][13 + i] && rows[0][13 + i] !== header) throw new Error('Cột ' + (14 + i) + ' của Devices đang có dữ liệu khác. Sao lưu và chuyển cột đó trước khi nâng cấp.');
+  });
+  Object.keys(INVENTORY_TABLES).forEach(name => {
+    const table = ss.getSheetByName(name);
+    if (table && table.getLastRow()) {
+      const head = table.getDataRange().getValues()[0];
+      if (!INVENTORY_TABLES[name].every((h, i) => head[i] === h)) throw new Error('Sheet ' + name + ' đã tồn tại với cấu trúc khác.');
+    }
+  });
+  rows.slice(1).filter(row => row[0]).forEach(inventoryConfig);
+  setTextMatrix(sheet, 1, 14, [INVENTORY_DEVICE_HEADERS]);
+  for (let i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    const config = inventoryConfig(rows[i]);
+    setTextMatrix(sheet, i + 1, 14, [INVENTORY_DEVICE_HEADERS.map(h => config[h])]);
+  }
+  Object.keys(INVENTORY_TABLES).forEach(name => {
+    let table = ss.getSheetByName(name);
+    if (!table) table = ss.insertSheet(name);
+    if (!table.getLastRow()) appendTextRow(table, INVENTORY_TABLES[name]);
+    if (table.setFrozenRows) table.setFrozenRows(1);
+  });
+  return {success: true, message: 'Đã nâng cấp số lượng và lịch sử dụng. Dữ liệu mượn cũ được giữ nguyên.'};
+}
+function inventoryRows(ss, name) {
+  const sheet = ss.getSheetByName(name);
+  if (!sheet) return [];
+  const headers = INVENTORY_TABLES[name];
+  return sheet.getDataRange().getValues().slice(1).map((row, index) => {
+    const record = {_row: index + 2};
+    headers.forEach((key, col) => record[key] = row[col] instanceof Date ? row[col].toISOString() : row[col] == null ? '' : String(row[col]));
+    return record;
+  }).filter(record => record[headers[0]]);
+}
+function inventoryAppend(ss, table, record) {
+  appendTextRow(ss.getSheetByName(table), INVENTORY_TABLES[table].map(key => record[key] == null ? '' : record[key]));
+}
+function inventoryUpdate(ss, table, record) {
+  setTextMatrix(ss.getSheetByName(table), record._row, 1, [INVENTORY_TABLES[table].map(key => record[key] == null ? '' : record[key])]);
+}
+function inventoryUser(ss, id) {
+  const sheet = ss.getSheetByName(CONFIG.SHEET_USERS);
+  const users = sheet ? sheet.getDataRange().getValues().slice(1).filter(row => inventoryKey(row[0]) === inventoryKey(id) && inventoryKey(id)) : [];
+  if (users.length !== 1) throw new Error('Mã người dùng chưa được cấp phép hoặc bị trùng.');
+  return {user_id: String(users[0][0]).trim(), full_name: String(users[0][2] || ''), role: String(users[0][4] || 'STUDENT').toUpperCase()};
+}
+function inventoryStaff(ss, token, roles) {
+  const raw = token && CacheService.getScriptCache().get('session_' + String(token).slice(0, 180));
+  if (!raw) throw new Error('Phiên cán bộ đã hết hạn. Vui lòng đăng nhập lại.');
+  const session = JSON.parse(raw);
+  const user = inventoryUser(ss, session.user_id);
+  const version = CacheService.getScriptCache().get('auth_version_' + inventoryKey(user.user_id)) || '0';
+  if (session.version !== version || session.credential !== inventoryCredential(ss, user.user_id) || !roles.includes(user.role)) throw new Error('Phiên đăng nhập đã thay đổi hoặc tài khoản không có quyền. Vui lòng đăng nhập lại.');
+  return user;
+}
+function inventoryCredential(ss, id) {
+  const row = ss.getSheetByName(CONFIG.SHEET_USERS).getDataRange().getValues().slice(1).find(row => inventoryKey(row[0]) === inventoryKey(id));
+  if (!row) throw new Error('Không tìm thấy tài khoản.');
+  return inventoryHash(String(row[1] || ''));
+}
+function inventoryHash(text) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8).map(byte => ('0' + (byte & 255).toString(16)).slice(-2)).join(''); }
+function inventoryRequestHash(payload, user) {
+  return inventoryHash(JSON.stringify([payload.action, inventoryKey(user.user_id), inventoryKey(payload.device_id), String(payload.quantity || ''), String(payload.loan_id || ''), String(payload.booking_id || ''), String(payload.transition || ''), inventoryText(payload.purpose,500), inventoryText(payload.note), String(payload.condition || ''), payload.start_at ? inventoryDate(payload.start_at) : '', payload.end_at ? inventoryDate(payload.end_at) : '']));
+}
+function inventorySession(user) {
+  const cache = CacheService.getScriptCache();
+  const token = Utilities.getUuid() + Utilities.getUuid();
+  cache.put('session_' + token, JSON.stringify({user_id: user.user_id, credential: inventoryCredential(SpreadsheetApp.getActiveSpreadsheet(), user.user_id), version: cache.get('auth_version_' + inventoryKey(user.user_id)) || '0'}), 21600);
+  return token;
+}
+function inventoryDevice(ss, id) {
+  const rows = ss.getSheetByName(CONFIG.SHEET_DEVICES).getDataRange().getValues();
+  const matches = rows.map((row, index) => ({row, index})).slice(1).filter(entry => inventoryKey(entry.row[0]) === inventoryKey(id) && inventoryKey(id));
+  if (matches.length !== 1) throw new Error('Không tìm thấy mã thiết bị duy nhất.');
+  return {row: matches[0].row, index: matches[0].index + 1, config: inventoryConfig(matches[0].row), device_id: String(matches[0].row[0])};
+}
+function inventoryState(ss) { return {loans: inventoryRows(ss, 'Loans'), returns: inventoryRows(ss, 'Returns'), bookings: inventoryRows(ss, 'Bookings')}; }
+function inventoryLoanOutstanding(loan, returns) {
+  const returned = returns.filter(r => r.loan_id === loan.loan_id).reduce((sum, r) => sum + inventoryInt(r.quantity, 1, 100000), 0);
+  const out = inventoryInt(loan.quantity, 1, 100000) - returned;
+  if (out < 0) throw new Error('Dữ liệu trả vượt số đã mượn: ' + loan.loan_id);
+  return out;
+}
+function inventorySummary(device, state) {
+  const c = device.config;
+  const loans = state.loans.filter(l => inventoryKey(l.device_id) === inventoryKey(device.device_id));
+  const returns = state.returns.filter(r => inventoryKey(r.device_id) === inventoryKey(device.device_id));
+  const borrowed = loans.reduce((sum, l) => sum + inventoryLoanOutstanding(l, state.returns), 0);
+  const pending = returns.filter(r => r.audit_status === 'pending').reduce((sum, r) => sum + inventoryInt(r.quantity, 1, 100000), 0);
+  const faulty = returns.filter(r => r.audit_status === 'rejected').reduce((sum, r) => sum + inventoryInt(r.quantity, 1, 100000), 0);
+  const available = c.total_quantity - c.unavailable_quantity - borrowed - pending - faulty;
+  if (available < 0) throw new Error('Tồn kho âm. Kiểm tra dữ liệu thiết bị ' + device.device_id);
+  return {total: c.total_quantity, borrowed, pending, faulty, maintenance: c.unavailable_quantity, available: c.service_status === 'ready' ? available : 0};
+}
+// Half-open intervals: an end at 10:00 permits another start at 10:00.
+// Sweep line counts peak concurrent units, not the sum of all intersecting bookings.
+function inventoryPeak(bookings, device, start, end, excludeId, now) {
+  const a = new Date(start).getTime(), b = new Date(end).getTime();
+  const events = [];
+  bookings.filter(r => r.device_id === device.device_id && r.booking_id !== excludeId && ['approved', 'active'].includes(r.status)).forEach(r => {
+    const s = new Date(r.start_at).getTime();
+    let e = new Date(r.end_at).getTime() + device.config.buffer_minutes * 60000;
+    if (r.status === 'active' && e <= now) e = Infinity; // An overdue actual session has not released its units.
+    if (s < b && e > a) {
+      const q = inventoryInt(r.quantity, 1, 100000);
+      events.push([Math.max(a, s), q], [Math.min(b, e), -q]);
+    }
+  });
+  events.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  let current = 0, peak = 0;
+  events.forEach(event => { current += event[1]; peak = Math.max(peak, current); });
+  return peak;
+}
+function inventoryBookingRange(payload, device) {
+  const start = inventoryDate(payload.start_at), end = inventoryDate(payload.end_at);
+  const s = new Date(start).getTime(), e = new Date(end).getTime();
+  if (s <= Date.now() || e <= s || s > Date.now() + 366 * 86400000) throw new Error('Chọn lịch tương lai trong vòng 1 năm, giờ kết thúc sau giờ bắt đầu.');
+  const localStart = new Date(s + 7 * 3600000).toISOString();
+  const localEnd = new Date(e + 7 * 3600000).toISOString();
+  if (localStart.slice(0, 10) !== localEnd.slice(0, 10) || localStart.slice(11, 16) < device.config.open_hour || localEnd.slice(11, 16) > device.config.close_hour || (e - s) > device.config.max_minutes * 60000) throw new Error('Lịch vượt giờ mở cửa, qua ngày hoặc quá thời lượng tối đa.');
+  return {start, end};
+}
+function inventoryCheckCapacity(device, state, quantity, start, end, excludeId) {
+  if (device.config.service_status !== 'ready') throw new Error('Thiết bị đang bảo trì hoặc bị khóa.');
+  const faultHold = state.bookings.filter(r => r.device_id === device.device_id && r.status === 'fault_hold').reduce((sum, r) => sum + inventoryInt(r.quantity, 1, 100000), 0);
+  const capacity = device.config.total_quantity - device.config.unavailable_quantity - faultHold;
+  const peak = inventoryPeak(state.bookings, device, start, new Date(new Date(end).getTime() + device.config.buffer_minutes * 60000).toISOString(), excludeId, Date.now());
+  if (quantity + peak > capacity) throw new Error('Không đủ số lượng trong toàn bộ khung giờ. Còn tối đa ' + Math.max(0, capacity - peak) + '.');
+}
+function inventoryRequestId(payload) {
+  const id = String(payload.request_id || '');
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(id)) throw new Error('Thiếu mã yêu cầu. Tải lại trang rồi thử lại.');
+  return id;
+}
+function inventoryPublic(record) { const copy = Object.assign({}, record); ['_row','request_id','request_hash','transition_request_id','transition_hash'].forEach(key => delete copy[key]); return copy; }
+function inventoryValidateDeviceChange(ss, payload, oldRow) {
+  const base = oldRow || [];
+  const draft = base.slice();
+  INVENTORY_DEVICE_HEADERS.forEach((h, i) => { if (payload[h] != null) draft[13 + i] = payload[h]; });
+  const config = inventoryConfig(draft);
+  if (!oldRow) return config;
+  const old = inventoryConfig(oldRow);
+  const state = inventoryState(ss);
+  const id = String(oldRow[0]);
+  const history = state.loans.some(r => r.device_id === id) || state.bookings.some(r => r.device_id === id);
+  const legacyBusy = String(oldRow[8] || 'Trong kho') !== 'Trong kho' || String(oldRow[9] || '').trim();
+  if ((old.usage_mode !== config.usage_mode || old.tracking_mode !== config.tracking_mode) && (legacyBusy || history)) throw new Error('Chỉ đổi cách quản lý khi thiết bị chưa có phiếu số lượng/lịch và đã hoàn trả, kiểm định xong. Tạo mã mới nếu cần đổi sau khi có lịch sử.');
+  const device = {config, device_id: id};
+  if (config.usage_mode === 'portable' && config.tracking_mode === 'quantity') inventorySummary(device, state);
+  if (config.usage_mode === 'lab') {
+    const holds = state.bookings.filter(r => r.device_id === id && r.status === 'fault_hold').reduce((sum, r) => sum + Number(r.quantity), 0);
+    const capacity = config.total_quantity - config.unavailable_quantity - holds;
+    const future = state.bookings.filter(r => r.device_id === id && ['approved', 'active'].includes(r.status) && (r.status === 'active' || new Date(r.end_at).getTime() > Date.now()));
+    const latest = Math.max(Date.now() + 1000, ...future.map(r => new Date(r.end_at).getTime() + config.buffer_minutes * 60000));
+    if (capacity < 0 || inventoryPeak(state.bookings, device, inventoryNow(), new Date(latest).toISOString(), '', Date.now()) > capacity) throw new Error('Số lượng mới không đủ cho các lịch đã duyệt/đang dùng và số bị cách ly.');
+    future.forEach(r => {
+      const start = new Date(new Date(r.start_at).getTime() + 7 * 3600000).toISOString();
+      const end = new Date(new Date(r.end_at).getTime() + 7 * 3600000).toISOString();
+      if (start.slice(11, 16) < config.open_hour || end.slice(11, 16) > config.close_hour || new Date(r.end_at) - new Date(r.start_at) > config.max_minutes * 60000) throw new Error('Giờ/thời lượng mới không phù hợp lịch đã duyệt. Hủy hoặc xử lý lịch đó trước.');
+    });
+  }
+  return config;
+}
+function inventoryHandle(ss, payload, staff) {
+  const action = payload.action;
+  if (action === 'admin_upgrade_schema') return inventoryUpgrade(ss);
+  if (!inventorySchemaReady(ss)) throw new Error('Cần nâng cấp dữ liệu số lượng và lịch trước khi sử dụng.');
+  const state = inventoryState(ss);
+  const user = staff || inventoryUser(ss, payload.user_id);
+  if (action === 'inventory_borrow') {
+    const device = inventoryDevice(ss, payload.device_id);
+    if (device.config.usage_mode !== 'portable' || device.config.tracking_mode !== 'quantity') throw new Error('Thiết bị này không dùng phiếu mượn số lượng.');
+    const requestId = inventoryRequestId(payload);
+    const requestHash = inventoryRequestHash(payload, user);
+    const duplicate = state.loans.find(r => r.request_id === requestId);
+    if (duplicate) {
+      if (duplicate.request_hash !== requestHash) throw new Error('Mã yêu cầu đã dùng cho phiếu khác.');
+      return {success: true, message: 'Phiếu mượn đã được ghi nhận.', loan_id: duplicate.loan_id};
+    }
+    const quantity = inventoryInt(payload.quantity, 1, device.config.total_quantity);
+    const purpose = inventoryText(payload.purpose, 500);
+    if (!purpose) throw new Error('Nhập mục đích sử dụng.');
+    if (quantity > inventorySummary(device, state).available) throw new Error('Không đủ số lượng có thể mượn. Hãy tải lại dữ liệu.');
+    const loan = {loan_id: inventoryId('LN'), device_id: device.device_id, user_id: user.user_id, user_name: user.full_name, quantity, purpose, note: inventoryText(payload.note), created_at: inventoryNow(), request_id: requestId, request_hash: requestHash};
+    inventoryAppend(ss, 'Loans', loan);
+    return {success: true, message: 'Đã ghi nhận mượn ' + quantity + ' thiết bị.', loan_id: loan.loan_id};
+  }
+  if (action === 'inventory_return') {
+    const loan = state.loans.find(r => r.loan_id === payload.loan_id);
+    if (!loan || inventoryKey(loan.user_id) !== inventoryKey(user.user_id)) throw new Error('Chỉ người đứng tên phiếu mượn mới được trả.');
+    const requestId = inventoryRequestId(payload);
+    const requestHash = inventoryRequestHash(payload, user);
+    const duplicate = state.returns.find(r => r.request_id === requestId);
+    if (duplicate) {
+      if (duplicate.request_hash !== requestHash) throw new Error('Mã yêu cầu đã dùng cho phiếu khác.');
+      return {success: true, message: 'Phiếu trả đã được ghi nhận.', return_id: duplicate.return_id};
+    }
+    const quantity = inventoryInt(payload.quantity, 1, inventoryLoanOutstanding(loan, state.returns));
+    if (!['good', 'missing', 'faulty'].includes(payload.condition)) throw new Error('Chọn tình trạng hoàn trả.');
+    if (payload.condition !== 'good' && !inventoryText(payload.note)) throw new Error('Ghi rõ tình trạng thiếu/hỏng.');
+    const record = {return_id: inventoryId('RT'), loan_id: loan.loan_id, device_id: loan.device_id, user_id: user.user_id, user_name: user.full_name, quantity, condition: payload.condition, note: inventoryText(payload.note), created_at: inventoryNow(), audit_status: 'pending', request_id: requestId, request_hash: requestHash};
+    inventoryAppend(ss, 'Returns', record);
+    return {success: true, message: 'Đã trả ' + quantity + ' thiết bị, đang chờ kiểm định.', return_id: record.return_id};
+  }
+  if (action === 'inventory_audit_return' || action === 'inventory_repair_return') {
+    const record = state.returns.find(r => r.return_id === payload.return_id);
+    if (!record) throw new Error('Không tìm thấy phiếu trả.');
+    if (action === 'inventory_audit_return') {
+      if (record.audit_status !== 'pending' || !['approved', 'rejected'].includes(payload.decision)) throw new Error('Phiếu đã kiểm định hoặc kết luận không hợp lệ.');
+      record.audit_status = payload.decision;
+      record.audited_by = user.full_name;
+      record.audit_note = inventoryText(payload.note);
+      record.audited_at = inventoryNow();
+    } else {
+      if (record.audit_status !== 'rejected' || !inventoryText(payload.note)) throw new Error('Chỉ xác nhận sửa xong phiếu bị cách ly, cần ghi chú sửa chữa.');
+      record.audit_status = 'repaired'; record.repaired_by = user.full_name; record.repaired_at = inventoryNow();
+      record.audit_note += '\nSửa chữa: ' + inventoryText(payload.note);
+    }
+    inventoryUpdate(ss, 'Returns', record);
+    return {success: true, message: 'Đã cập nhật kiểm định/sửa chữa số lượng.'};
+  }
+  if (action === 'booking_create' || action === 'booking_block') {
+    const device = inventoryDevice(ss, payload.device_id);
+    if (device.config.usage_mode !== 'lab') throw new Error('Thiết bị này không đăng ký lịch tại lab.');
+    const requestId = inventoryRequestId(payload);
+    const requestHash = inventoryRequestHash(payload, user);
+    const duplicate = state.bookings.find(r => r.request_id === requestId);
+    const kind = action === 'booking_block' ? 'block' : 'use';
+    if (duplicate) {
+      if (duplicate.request_hash !== requestHash) throw new Error('Mã yêu cầu đã dùng cho lịch khác.');
+      return {success: true, message: 'Lịch đã được ghi nhận.', booking_id: duplicate.booking_id};
+    }
+    const range = inventoryBookingRange(payload, device);
+    const quantity = inventoryInt(payload.quantity, 1, device.config.total_quantity);
+    const purpose = inventoryText(payload.purpose, 500);
+    if (!purpose) throw new Error('Nhập mục đích sử dụng hoặc lý do chặn lịch.');
+    inventoryCheckCapacity(device, state, quantity, range.start, range.end);
+    const record = {booking_id: inventoryId('BK'), device_id: device.device_id, user_id: user.user_id, user_name: user.full_name, quantity, start_at: range.start, end_at: range.end, purpose, note: inventoryText(payload.note), status: kind === 'block' ? 'approved' : 'pending', created_at: inventoryNow(), updated_at: inventoryNow(), reviewed_by: kind === 'block' ? user.full_name : '', request_id: requestId, request_hash: requestHash, kind};
+    inventoryAppend(ss, 'Bookings', record);
+    return {success: true, message: kind === 'block' ? 'Đã chặn lịch.' : 'Đã gửi lịch, chờ cán bộ duyệt.', booking_id: record.booking_id};
+  }
+  if (action === 'booking_update') {
+    const record = state.bookings.find(r => r.booking_id === payload.booking_id);
+    if (!record) throw new Error('Không tìm thấy lịch sử dụng.');
+    const device = inventoryDevice(ss, record.device_id);
+    const transition = payload.transition;
+    if (!staff && inventoryKey(record.user_id) !== inventoryKey(user.user_id)) throw new Error('Bạn không đứng tên lịch này.');
+    const transitionId = payload.request_id ? inventoryRequestId(payload) : '';
+    const transitionHash = transitionId ? inventoryRequestHash(payload, user) : '';
+    if (transitionId && record.transition_request_id === transitionId) {
+      if (record.transition_hash !== transitionHash) throw new Error('Mã yêu cầu đã dùng cho thao tác lịch khác.');
+      return {success: true, message: 'Thao tác lịch đã được ghi nhận.'};
+    }
+    const now = Date.now();
+    if (transition === 'approve') {
+      if (!staff || record.status !== 'pending' || new Date(record.start_at).getTime() <= now) throw new Error('Chỉ cán bộ được duyệt lịch tương lai đang chờ.');
+      inventoryCheckCapacity(device, state, Number(record.quantity), record.start_at, record.end_at, record.booking_id);
+      record.status = 'approved'; record.reviewed_by = user.full_name; record.review_note = inventoryText(payload.note);
+    } else if (transition === 'reject') {
+      if (!staff || record.status !== 'pending') throw new Error('Chỉ cán bộ được từ chối lịch chờ duyệt.');
+      record.status = 'rejected'; record.reviewed_by = user.full_name; record.review_note = inventoryText(payload.note);
+    } else if (transition === 'cancel') {
+      if (!['pending', 'approved'].includes(record.status)) throw new Error('Chỉ hủy lịch chưa bắt đầu.');
+      record.status = 'cancelled'; record.review_note = inventoryText(payload.note);
+    } else if (transition === 'no_show') {
+      if (!staff || record.kind === 'block' || record.status !== 'approved' || now < new Date(record.end_at).getTime()) throw new Error('Chỉ cán bộ đánh dấu không đến sau giờ kết thúc.');
+      record.status = 'no_show'; record.reviewed_by = user.full_name;
+    } else if (transition === 'start') {
+      if (record.kind === 'block' || record.status !== 'approved' || now < new Date(record.start_at).getTime() || now >= new Date(record.end_at).getTime()) throw new Error('Chỉ bắt đầu lịch đã duyệt trong khung giờ đăng ký.');
+      inventoryCheckCapacity(device, state, Number(record.quantity), new Date(now).toISOString(), record.end_at, record.booking_id);
+      record.status = 'active'; record.actual_start = inventoryNow();
+    } else if (transition === 'finish') {
+      if (record.status !== 'active' || !['good', 'faulty'].includes(payload.condition)) throw new Error('Chọn tình trạng kết thúc cho buổi đang sử dụng.');
+      if (payload.condition === 'faulty' && !inventoryText(payload.note)) throw new Error('Ghi rõ sự cố khi kết thúc.');
+      record.status = 'completed'; record.actual_end = inventoryNow(); record.end_condition = payload.condition;
+      record.note += (payload.note ? '\nKết thúc: ' + inventoryText(payload.note) : '');
+      // Put a fault hold on the same booking row: capacity is never released before the fault is recorded.
+      if (payload.condition === 'faulty') record.status = 'fault_hold';
+    } else if (transition === 'repair') {
+      if (!staff || record.status !== 'fault_hold' || !inventoryText(payload.note)) throw new Error('Cán bộ cần ghi chú xác nhận sửa chữa.');
+      record.status = 'completed'; record.review_note += '\nSửa chữa: ' + inventoryText(payload.note); record.reviewed_by = user.full_name;
+    } else throw new Error('Thao tác lịch không hợp lệ.');
+    record.updated_at = inventoryNow();
+    record.transition_request_id = transitionId; record.transition_hash = transitionHash;
+    inventoryUpdate(ss, 'Bookings', record);
+    return {success: true, message: 'Đã cập nhật lịch sử dụng.'};
+  }
+  throw new Error('Thao tác số lượng/lịch không hợp lệ.');
+}
+
+
 /**
  * ======================================================================================
  * 1. doGet(e): Trả về Devices, Whitelist, Hàng đợi Kiểm định QA và Nhật ký Chỉnh sửa Admin
@@ -141,6 +501,8 @@ function doGet(e) {
     if (!devSheet) return createJsonResponse({ success: false, message: "Sheet Devices không tồn tại!" });
     
     const devValues = devSheet.getDataRange().getValues();
+    const schemaReady = inventorySchemaReady(ss);
+    const inventory = inventoryState(ss);
     
     // 2. Lấy Logs và phân loại (Giao dịch sinh viên & Nhật ký chỉnh sửa của Admin)
     const logSheet = ss.getSheetByName(CONFIG.SHEET_LOGS);
@@ -194,7 +556,17 @@ function doGet(e) {
       const deviceId = String(row[0] || "").trim();
       if (!deviceId) continue;
       
+      const deviceConfig = inventoryConfig(row);
+      let stock = null;
+      if (deviceConfig.usage_mode === 'portable' && deviceConfig.tracking_mode === 'quantity') stock = inventorySummary({config: deviceConfig, device_id: deviceId}, inventory);
+      if (deviceConfig.usage_mode === 'lab') {
+        const faulty = inventory.bookings.filter(r => r.device_id === deviceId && r.status === 'fault_hold').reduce((sum, r) => sum + Number(r.quantity), 0);
+        const busy = inventoryPeak(inventory.bookings, {config: deviceConfig, device_id: deviceId}, inventoryNow(), new Date(Date.now() + 1000).toISOString(), '', Date.now());
+        stock = {total: deviceConfig.total_quantity, borrowed: busy, pending: 0, faulty, maintenance: deviceConfig.unavailable_quantity, available: deviceConfig.service_status === 'ready' ? Math.max(0, deviceConfig.total_quantity - deviceConfig.unavailable_quantity - faulty - busy) : 0};
+      }
       devices.push({
+        ...deviceConfig,
+        stock,
         device_id: deviceId,
         name: String(row[1] || ""),
         category: String(row[2] || "Khác"),
@@ -237,7 +609,11 @@ function doGet(e) {
       devices: devices,
       whitelist: whitelist,
       audit_queue: auditQueue,
-      edit_logs: editLogs
+      edit_logs: editLogs,
+      schema_version: schemaReady ? 2 : 1,
+      loans: inventory.loans.map(loan => Object.assign(inventoryPublic(loan), {outstanding: inventoryLoanOutstanding(loan, inventory.returns)})),
+      quantity_returns: inventory.returns.map(inventoryPublic),
+      bookings: inventory.bookings.map(inventoryPublic)
     });
     
   } catch (error) {
@@ -267,6 +643,23 @@ function doPost(e) {
     const action = payload.action;
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
+    // Staff roles come from a server-issued session and the current Users sheet.
+    const staffActions = ['admin_save_device', 'admin_delete_device', 'audit_transaction', 'admin_unlock', 'admin_upgrade_schema', 'inventory_audit_return', 'inventory_repair_return', 'booking_block'];
+    let staff = null;
+    if (staffActions.includes(action) || (action === 'booking_update' && ['approve', 'reject', 'no_show', 'repair'].includes(payload.transition)) || (action === 'booking_update' && payload.staff_session)) {
+      const roles = ['admin_delete_device', 'admin_upgrade_schema'].includes(action) ? ['ADMIN'] : ['ADMIN', 'INSPECTOR'];
+      staff = inventoryStaff(ss, payload.staff_session, roles);
+      payload.admin_name = staff.full_name;
+      payload.inspector_name = staff.full_name;
+    }
+    if (action === 'admin_logout') {
+      if (payload.staff_session) CacheService.getScriptCache().remove('session_' + String(payload.staff_session).slice(0, 180));
+      return createJsonResponse({success: true});
+    }
+    if (action === 'admin_upgrade_schema' || action.startsWith('inventory_') || action.startsWith('booking_')) {
+      return createJsonResponse(inventoryHandle(ss, payload, staff));
+    }
+
     if (action === "admin_change_password") {
       const sheet = ss.getSheetByName(CONFIG.SHEET_USERS);
       if (!sheet) return createJsonResponse({ success: false, message: "Sheet Users không tồn tại!" });
@@ -293,6 +686,7 @@ function doPost(e) {
       }
       if (targets.length !== 1) return createJsonResponse({ success: false, message: "Không tìm thấy tài khoản duy nhất cần đổi mật khẩu." });
       setText(sheet.getRange(targets[0], 2), newPin);
+      cache.put('auth_version_' + targetId, Utilities.getUuid(), 21600);
       cache.remove(key);
       return createJsonResponse({ success: true, message: "Đã đổi mật khẩu tài khoản. Lần đăng nhập tiếp theo cần dùng mật khẩu mới." });
     }
@@ -306,6 +700,11 @@ function doPost(e) {
       
       const inputId = String(payload.user_id || "").trim();
       const inputPin = String(payload.pin || "").trim();
+      if (!inputId || !inputPin || inputId.length > 100 || inputPin.length > 128) throw new Error('Nhập tài khoản và mật khẩu hợp lệ.');
+      const loginCache = CacheService.getScriptCache();
+      const loginKey = 'staff_login_attempts_' + encodeURIComponent(inputId.toLowerCase());
+      const loginAttempts = Number(loginCache.get(loginKey) || 0);
+      if (loginAttempts >= 5) throw new Error('Đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.');
       const userRows = userSheet.getDataRange().getValues();
       
       let matchedStaff = null;
@@ -326,8 +725,10 @@ function doPost(e) {
       }
       
       if (matchedStaff) {
-        return createJsonResponse({ success: true, user: matchedStaff, message: `Chào mừng ${matchedStaff.full_name} (${matchedStaff.role})!` });
+        loginCache.remove(loginKey);
+        return createJsonResponse({ success: true, user: matchedStaff, staff_session: inventorySession(matchedStaff), message: `Chào mừng ${matchedStaff.full_name} (${matchedStaff.role})!` });
       } else {
+        loginCache.put(loginKey, String(loginAttempts + 1), 900);
         return createJsonResponse({ success: false, message: "Sai tài khoản Quản trị/Kiểm định hoặc mã PIN!" });
       }
     }
@@ -342,7 +743,7 @@ function doPost(e) {
       const devId = String(payload.device_id || "").trim();
       const adminName = String(payload.admin_name || "Admin Lab").trim();
       if (!devId) return createJsonResponse({ success: false, message: "Mã thiết bị không được để trống!" });
-      uploadDeviceFiles(payload);
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(devId)) throw new Error('Mã thiết bị chỉ gồm chữ không dấu, số, dấu gạch ngang/gạch dưới (tối đa 80 ký tự).');
       if (payload.golden_image) {
         payload.golden_image = formatDriveImageUrl(payload.golden_image);
       }
@@ -359,6 +760,13 @@ function doPost(e) {
       }
 
       const logSheet = ss.getSheetByName(CONFIG.SHEET_LOGS);
+      const duplicateIds = devValues.slice(1).filter(row => inventoryKey(row[0]) === inventoryKey(devId));
+      if (duplicateIds.length > 1) throw new Error('Mã thiết bị đang bị trùng trong Sheets.');
+      const hasConfig = INVENTORY_DEVICE_HEADERS.some(h => payload[h] != null);
+      if (hasConfig && !inventorySchemaReady(ss)) throw new Error('Nâng cấp dữ liệu số lượng/lịch trước khi lưu cấu hình mới.');
+      const savedConfig = inventoryValidateDeviceChange(ss, payload, foundRow > 0 ? devValues[foundRow - 1] : null);
+      uploadDeviceFiles(payload);
+      if (payload.golden_image) payload.golden_image = formatDriveImageUrl(payload.golden_image);
 
       if (foundRow > 0) {
         // CẬP NHẬT THIẾT BỊ HIỆN CÓ (Gộp thành 1 lệnh ghi mảng để tăng tốc)
@@ -373,6 +781,7 @@ function doPost(e) {
         ]];
         setTextMatrix(devSheet, foundRow, 2, rowUpdates);
         setText(devSheet.getRange(foundRow, 13), nowStr);
+        if (hasConfig) setTextMatrix(devSheet, foundRow, 14, [INVENTORY_DEVICE_HEADERS.map(h => savedConfig[h])]);
 
         // Ghi log chỉnh sửa
         if (logSheet) {
@@ -410,7 +819,8 @@ function doPost(e) {
           "",
           "",
           "",
-          nowStr
+          nowStr,
+          ...(hasConfig ? INVENTORY_DEVICE_HEADERS.map(h => savedConfig[h]) : [])
         ]);
 
         // Ghi log thêm mới
@@ -460,6 +870,9 @@ function doPost(e) {
       }
 
       if (deletedRow > 0) {
+        const row = devValues[deletedRow - 1];
+        const state = inventoryState(ss);
+        if (String(row[8] || 'Trong kho') !== 'Trong kho' || String(row[9] || '').trim() || state.loans.some(r => r.device_id === row[0]) || state.bookings.some(r => r.device_id === row[0])) throw new Error('Thiết bị đang được giữ/chờ kiểm định hoặc đã có lịch sử số lượng/lịch. Hãy khóa sử dụng thay vì xóa.');
         devSheet.deleteRow(deletedRow);
 
         // Ghi log xóa
@@ -634,8 +1047,8 @@ function doPost(e) {
     // -------------------------------------------------------------
     if (action === "transaction") {
       const txType = payload.tx_type;
-      const userId = String(payload.user_id || "").trim();
-      const userName = String(payload.user_name || "").trim();
+      let userId = String(payload.user_id || "").trim();
+      let userName = String(payload.user_name || "").trim();
       const deviceIds = Array.isArray(payload.device_ids) ? payload.device_ids : [];
       const projectTag = String(payload.project_tag || "").trim();
       const checkedAccessories = String(payload.checked_accessories || "").trim();
@@ -646,6 +1059,9 @@ function doPost(e) {
       if (!userId || deviceIds.length === 0) {
         return createJsonResponse({ success: false, message: "Thiếu thông tin người dùng hoặc danh sách thiết bị!" });
       }
+      const borrower = inventoryUser(ss, userId);
+      userId = borrower.user_id;
+      userName = borrower.full_name;
 
       // Validate the whole batch under the script lock, before upload/log/write.
       if (txType !== "Mượn mới" && txType !== "Trả về kho") {
@@ -669,10 +1085,13 @@ function doPost(e) {
         if (matches.length !== 1) return createJsonResponse({ success: false, message: `Không tìm thấy mã thiết bị duy nhất: ${id}.` });
         const status = String(matches[0][8] || "").trim();
         const holder = String(matches[0][9] || "").trim();
+        const config = inventoryConfig(matches[0]);
+        if (config.usage_mode !== 'portable' || config.tracking_mode !== 'individual') throw new Error('Thiết bị này cần dùng phiếu số lượng hoặc đăng ký lịch.');
+        if (txType === 'Mượn mới' && (config.service_status !== 'ready' || config.unavailable_quantity > 0)) throw new Error('Thiết bị đang bảo trì hoặc bị khóa.');
         if (txType === "Mượn mới" && (status !== "Trong kho" || holder)) {
           return createJsonResponse({ success: false, message: `Thiết bị ${id} không sẵn sàng cho mượn. Hãy tải lại dữ liệu.` });
         }
-        if (txType === "Trả về kho" && (status !== "Đang mượn" || holder !== userId)) {
+        if (txType === "Trả về kho" && (status !== "Đang mượn" || inventoryKey(holder) !== inventoryKey(userId))) {
           return createJsonResponse({ success: false, message: `Chỉ người đang giữ thiết bị ${id} mới được trả về kho.` });
         }
       }
@@ -873,7 +1292,7 @@ function sendTextMessageFallback(text) {
 
 /**
  * ======================================================================================
- * 3. initialSetup(): Khởi tạo tự động toàn bộ Sheet & dữ liệu mẫu (Chạy 1 lần duy nhất)
+ * 3. initialSetup(): Khởi tạo sheet trống, không tạo tài khoản/thiết bị mẫu
  * ======================================================================================
  */
 function initialSetup() {
@@ -894,14 +1313,6 @@ function initialSetup() {
     devSheet.getRange(1, 1, 1, devHeaders.length).setFontWeight("bold").setBackground("#1e293b").setFontColor("#ffffff");
     devSheet.setFrozenRows(1);
     
-    // Thêm dữ liệu mẫu
-    const nowStr = Utilities.formatDate(new Date(), "GMT+7", "yyyy-MM-dd HH:mm:ss");
-    const sampleDevices = [
-      ["DEV001", "Jetson Nano Developer Kit B01", "MCU/SBC", "Tủ A - Ngăn 1", "Nguồn 5V-4A, Thẻ nhớ 64GB, Cáp microUSB, Quạt tản nhiệt", "https://images.unsplash.com/photo-1518770660439-4636190af475?w=600", "Nguồn 5V-4A DC Barrel Jack", "https://developer.nvidia.com/embedded/jetson-nano-developer-kit", "Trong kho", "", "", "", nowStr],
-      ["DEV002", "Raspberry Pi 4 Model B (4GB)", "MCU/SBC", "Tủ A - Ngăn 2", "Nguồn Type-C 5V-3A, Vỏ nhôm tản nhiệt, Thẻ nhớ 32GB", "https://images.unsplash.com/photo-1555680202-c86f0e12f086?w=600", "Dùng nguồn Type-C 5V chuẩn", "https://www.raspberrypi.com/documentation/", "Trong kho", "", "", "", nowStr],
-      ["DEV003", "LiDAR Slamtec RPLIDAR A1M8", "Cảm biến", "Tủ B - Ngăn 1", "Board chuyển đổi USB, Cáp kết nối 7-pin", "https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=600", "5V-0.5A, tránh va đập mạnh gương quay", "https://www.slamtec.com/en/Support#rplidar-a-series", "Trong kho", "", "", "", nowStr]
-    ];
-    sampleDevices.forEach(row => appendTextRow(devSheet, row));
   }
   
   // 2. Tạo hoặc cấu hình Sheet Users
@@ -915,13 +1326,6 @@ function initialSetup() {
     userSheet.getRange(1, 1, 1, userHeaders.length).setFontWeight("bold").setBackground("#1e293b").setFontColor("#ffffff");
     userSheet.setFrozenRows(1);
     
-    const sampleUsers = [
-      ["admin", "9999", "Quản Trị Viên Lab", "0988888888", "ADMIN", "K68"],
-      ["inspector", "7777", "Kiểm Định Viên QA", "0977777777", "INSPECTOR", "K68"],
-      ["sv01", "1234", "Nguyễn Văn A", "0912345678", "STUDENT", "K68"],
-      ["sv02", "1234", "Trần Thị B", "0923456789", "STUDENT", "K69"]
-    ];
-    sampleUsers.forEach(row => appendTextRow(userSheet, row));
   }
   
   // 3. Tạo hoặc cấu hình Sheet Logs
@@ -940,5 +1344,6 @@ function initialSetup() {
     logSheet.setFrozenRows(1);
   }
   
-  Logger.log("Đã khởi tạo thành công toàn bộ hệ cơ sở dữ liệu ROAB LAB trên Google Sheets!");
+  inventoryUpgrade(ss);
+  Logger.log("Đã khởi tạo sheet trống. Tạo tài khoản thật trong Users trước khi sử dụng.");
 }

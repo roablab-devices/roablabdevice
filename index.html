@@ -10,7 +10,7 @@
   <meta property="og:description" content="Hệ thống quản lý, mượn trả và kiểm định thiết bị phần cứng phòng nghiên cứu ROAB Lab.">
   <meta property="og:site_name" content="ROAB LAB">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://roablab-devices.github.io/roablabdevide/">
+  <meta property="og:url" content="https://roablab-devices.github.io/roablabdevice/">
   <meta name="theme-color" content="#FF2A36">
   
   <!-- Tailwind CSS & DaisyUI CDN -->
@@ -122,7 +122,10 @@
       border-bottom: 2px solid #FF2A36;
       border-right: 2px solid #FF2A36;
     }
-  </style>
+.resource-input { display:block; width:100%; min-width:0; border:1px solid #2E354D; background:#07080B; color:#fff; border-radius:.75rem; padding:.65rem .8rem; font-size:1rem; }
+.resource-input:focus { outline:2px solid #06B6D4; outline-offset:1px; }
+.resource-ui button:disabled { opacity:.5; cursor:wait; }
+</style>
 </head>
 <body class="min-h-screen flex flex-col antialiased selection:bg-brand-red selection:text-white">
 
@@ -275,6 +278,95 @@
     </div>
   </header>
 
+  <div class="border-b border-brand-border bg-brand-card px-4 py-3">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+      <p class="text-sm text-slate-300">Mượn linh kiện theo số lượng · Đăng ký robot và thiết bị tại lab</p>
+      <button @click="openResourceWorkspace('AGENDA')" class="btn-red-cta rounded-xl px-4 py-2 text-sm font-bold">Lịch sử dụng & phiếu mượn</button>
+    </div>
+    <div v-if="schemaVersion < 2 && !connectionError" class="max-w-7xl mx-auto mt-3 text-sm text-amber-300 flex flex-wrap items-center gap-3">
+      <span>Cần cập nhật Apps Script và nâng cấp dữ liệu để dùng số lượng, đặt lịch.</span>
+      <button v-if="adminUser && adminUser.role === 'ADMIN'" @click="upgradeResourceSchema" :disabled="resourceBusy" class="btn btn-sm bg-amber-400 text-black">Nâng cấp dữ liệu</button>
+    </div>
+  </div>
+
+  <section v-if="currentViewMode === 'RESOURCES'" class="flex-1 px-4 py-6">
+    <div class="max-w-7xl mx-auto space-y-5 resource-ui">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div><h1 class="text-2xl font-bold text-white">Lịch sử dụng & phiếu mượn</h1><p class="text-sm text-brand-grayText mt-1">Giờ Việt Nam (UTC+7). Lịch chờ duyệt chưa giữ chỗ.</p></div>
+        <div class="flex gap-2"><button @click="fetchData" :disabled="resourceBusy" class="btn btn-sm bg-white/10 text-white">Làm mới</button><button @click="currentViewMode = 'SHOWROOM'" class="btn btn-sm bg-white/10 text-white">Về danh mục</button></div>
+      </div>
+      <p v-if="connectionError" role="alert" class="p-4 rounded-xl bg-red-950 text-red-200">{{ connectionError }}</p>
+      <div class="flex flex-wrap gap-2">
+        <button v-for="tab in resourceTabs" :key="tab.id" @click="resourceTab = tab.id" :class="resourceTab === tab.id ? 'bg-brand-red text-white' : 'bg-brand-card text-slate-300'" class="px-4 py-2 rounded-xl text-sm font-bold border border-brand-border">{{ tab.label }}</button>
+      </div>
+
+      <template v-if="resourceTab === 'AGENDA'">
+        <div class="rounded-2xl bg-brand-card border border-brand-border p-4 space-y-4">
+          <div v-if="!labDevices.length" class="text-sm text-slate-300">Chưa có thiết bị đăng ký tại lab. Cán bộ mở Sửa thiết bị và chọn cách sử dụng tại lab để bắt đầu.</div>
+          <div class="flex flex-wrap items-end gap-3">
+            <label class="flex-1 min-w-[180px] text-sm text-slate-300">Thiết bị tại lab<select v-model="agendaDeviceId" class="resource-input mt-1"><option value="">Tất cả thiết bị</option><option v-for="d in labDevices" :key="d.device_id" :value="d.device_id">{{ d.device_id }} · {{ d.name }}</option></select></label>
+            <label class="text-sm text-slate-300">Hiển thị<select v-model="agendaFilter" class="resource-input mt-1"><option value="all">Tất cả lịch</option><option value="mine">Lịch của tôi</option><option value="pending">Chờ duyệt</option></select></label>
+            <button @click="openBookingForSelected" :disabled="schemaVersion < 2" class="btn-red-cta px-4 py-2 rounded-xl text-sm font-bold">Đăng ký sử dụng</button>
+            <button v-if="canEditDevices && agendaDeviceId" @click="openResourceDialog('block', deviceById(agendaDeviceId))" class="btn bg-amber-400 text-black btn-sm">Chặn lịch</button>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <div class="flex gap-2"><button @click="moveAgendaWeek(-1)" class="btn btn-sm bg-white/10 text-white">Tuần trước</button><button @click="agendaAnchor = localDateString()" class="btn btn-sm bg-white/10 text-white">Tuần này</button><button @click="moveAgendaWeek(1)" class="btn btn-sm bg-white/10 text-white">Tuần sau</button></div>
+            <strong class="text-slate-200">{{ agendaWeekLabel }}</strong>
+          </div>
+          <div class="overflow-x-auto"><div class="grid grid-cols-7 gap-2 min-w-[980px]">
+            <div v-for="day in agendaDays" :key="day.date" class="rounded-xl bg-brand-black border border-brand-border p-3 min-h-[180px]">
+              <h2 class="text-sm font-bold text-white border-b border-brand-border pb-2">{{ day.label }}</h2>
+              <p v-if="!day.items.length" class="text-sm text-brand-grayText mt-3">Chưa có lịch</p>
+              <button v-for="b in day.items" :key="b.booking_id" @click="selectedBookingId = b.booking_id" class="block w-full text-left mt-3 p-2 rounded-lg border text-sm" :class="bookingBadgeClass(b.status)">
+                <strong class="block">{{ bookingTime(b) }}</strong><span class="block break-words">{{ deviceName(b.device_id) }}</span><span class="block">{{ b.user_name }} · {{ b.quantity }} chiếc</span><span class="block mt-1">{{ bookingStatusLabel(b) }}</span>
+              </button>
+            </div>
+          </div></div>
+          <p class="text-sm text-brand-grayText">Chọn lịch để xem chi tiết, duyệt hoặc xác nhận sử dụng. Lịch báo lỗi tiếp tục cách ly số lượng đến khi cán bộ xác nhận sửa xong.</p>
+        </div>
+        <div v-if="selectedBooking" class="rounded-2xl border border-brand-border bg-brand-card p-4 space-y-3">
+          <div class="flex justify-between gap-3"><h2 class="text-lg font-bold text-white">{{ deviceName(selectedBooking.device_id) }} · {{ selectedBooking.quantity }} chiếc</h2><button @click="selectedBookingId = ''" class="text-sm text-slate-300">Đóng chi tiết</button></div>
+          <p class="text-sm text-slate-300">{{ formatResourceDate(selectedBooking.start_at) }} – {{ formatResourceDate(selectedBooking.end_at) }} · {{ selectedBooking.user_name }}</p>
+          <p class="text-sm font-bold" :class="bookingStatusTextClass(selectedBooking.status)">{{ bookingStatusLabel(selectedBooking) }}</p>
+          <p class="text-sm text-slate-200 whitespace-pre-line">{{ selectedBooking.purpose }}<br>{{ selectedBooking.note }}</p>
+          <p v-if="selectedBooking.review_note" class="text-sm text-amber-200 whitespace-pre-line">Cán bộ: {{ selectedBooking.review_note }}</p>
+          <p v-if="selectedBooking.actual_start" class="text-sm text-slate-300">Thực tế: {{ formatResourceDate(selectedBooking.actual_start) }} – {{ selectedBooking.actual_end ? formatResourceDate(selectedBooking.actual_end) : 'Chưa kết thúc' }}</p>
+          <label v-if="canEditDevices" class="block text-sm text-slate-300">Ghi chú duyệt / lý do xử lý<input v-model="resourceReviewNote" maxlength="2000" class="resource-input mt-1"></label>
+          <div class="flex flex-wrap gap-2">
+            <button v-for="action in bookingActions(selectedBooking)" :key="action.id" @click="performBookingAction(selectedBooking, action.id)" :disabled="resourceBusy" class="btn btn-sm" :class="action.id === 'start' || action.id === 'approve' ? 'bg-emerald-400 text-black' : 'bg-white/10 text-white'">{{ action.label }}</button>
+          </div>
+        </div>
+        <div v-if="attentionBookings.length" class="rounded-2xl border border-amber-500/30 p-4 space-y-3">
+          <h2 class="text-base font-bold text-amber-300">Cần xử lý · gồm cả lịch ngoài tuần đang xem</h2>
+          <button v-for="b in attentionBookings" :key="b.booking_id" @click="selectedBookingId = b.booking_id" class="block w-full text-left text-sm text-slate-200 p-3 rounded-xl bg-brand-card">{{ deviceName(b.device_id) }} · {{ formatResourceDate(b.start_at) }} · {{ b.user_name }} · {{ bookingStatusLabel(b) }}</button>
+        </div>
+      </template>
+
+      <template v-if="resourceTab === 'LOANS'">
+        <div class="flex flex-wrap gap-3 items-center"><label class="text-sm text-slate-300"><input v-model="onlyMyLoans" type="checkbox" class="checkbox checkbox-sm mr-2 align-middle">Chỉ phiếu của tôi</label><label class="text-sm text-slate-300">Thiết bị<select v-model="loansDeviceId" class="resource-input mt-1"><option value="">Tất cả thiết bị</option><option v-for="d in devices.filter(d => d.tracking_mode === 'quantity' && d.usage_mode !== 'lab')" :key="d.device_id" :value="d.device_id">{{ d.name }}</option></select></label><span class="text-sm text-brand-grayText">Có thể trả nhiều lần; số trả chờ kiểm định chưa được cho mượn lại.</span></div>
+        <p v-if="!visibleLoans.length" class="text-slate-300 p-5 bg-brand-card rounded-2xl">Chưa có phiếu mượn phù hợp.</p>
+        <div v-for="loan in visibleLoans" :key="loan.loan_id" class="rounded-2xl border border-brand-border bg-brand-card p-4 space-y-3">
+          <div class="flex flex-wrap justify-between gap-3"><h2 class="text-base font-bold text-white">{{ deviceName(loan.device_id) }}</h2><strong :class="loan.outstanding ? 'text-amber-300' : 'text-emerald-300'">Còn giữ: {{ loan.outstanding }}</strong></div>
+          <p class="text-sm text-slate-300">{{ loan.user_name }} · Mượn {{ loan.quantity }} · Đã trả {{ Number(loan.quantity) - loan.outstanding }} · {{ formatResourceDate(loan.created_at) }}</p>
+          <p class="text-sm text-brand-grayText">{{ loan.purpose }} · {{ loan.note }}</p>
+          <div class="flex flex-wrap gap-2"><button v-if="loan.outstanding > 0 && isResourceOwner(loan)" @click="openResourceDialog('return', deviceById(loan.device_id), loan)" class="btn btn-sm bg-amber-400 text-black">Trả thiết bị</button><button @click="openResourceDialog('borrow', deviceById(loan.device_id))" class="btn btn-sm bg-white/10 text-white">Mượn thêm</button></div>
+          <div v-for="r in returnsForLoan(loan.loan_id)" :key="r.return_id" class="text-sm text-slate-300 border-t border-brand-border pt-2">Trả {{ r.quantity }} · {{ formatResourceDate(r.created_at) }} · {{ returnStatusLabel(r.audit_status) }}<span v-if="r.audit_note"> · {{ r.audit_note }}</span></div>
+        </div>
+      </template>
+
+      <template v-if="resourceTab === 'QA' && canEditDevices">
+        <p class="text-sm text-brand-grayText">Kiểm định riêng từng lần trả. Chấp nhận sẽ cộng số lượng đó vào kho; cách ly giữ lại đến khi sửa xong.</p>
+        <p v-if="!quantityReturns.length" class="text-slate-300">Chưa có phiếu trả số lượng.</p>
+        <div v-for="r in quantityReturns.slice().reverse()" :key="r.return_id" class="rounded-2xl border border-brand-border bg-brand-card p-4 space-y-3">
+          <h2 class="font-bold text-white">{{ deviceName(r.device_id) }} · {{ r.quantity }} chiếc · {{ returnStatusLabel(r.audit_status) }}</h2>
+          <p class="text-sm text-slate-300">{{ r.user_name }} · {{ formatResourceDate(r.created_at) }} · {{ resourceConditionLabel(r.condition) }}</p><p class="text-sm text-amber-200 whitespace-pre-line">{{ r.note }}<br>{{ r.audit_note }}</p>
+          <label v-if="['pending','rejected'].includes(r.audit_status)" class="block text-sm text-slate-300">Ghi chú kiểm định / sửa chữa<input v-model="quantityAuditNotes[r.return_id]" maxlength="2000" class="resource-input mt-1"></label>
+          <div class="flex flex-wrap gap-2"><template v-if="r.audit_status === 'pending'"><button @click="auditQuantityReturn(r, 'approved')" :disabled="resourceBusy" class="btn btn-sm bg-emerald-400 text-black">Đạt · nhập lại kho</button><button @click="auditQuantityReturn(r, 'rejected')" :disabled="resourceBusy" class="btn btn-sm bg-red-600 text-white">Cách ly số lượng này</button></template><button v-if="r.audit_status === 'rejected'" @click="auditQuantityReturn(r, 'repaired')" :disabled="resourceBusy" class="btn btn-sm bg-amber-400 text-black">Đã sửa xong · nhập lại kho</button></div>
+        </div>
+      </template>
+    </div>
+  </section>
+
   <!-- ==================== VIEW 1: SHOWROOM THIẾT BỊ SINH VIÊN ==================== -->
   <div v-show="currentViewMode === 'SHOWROOM'" class="flex-1 flex flex-col">
     
@@ -318,11 +410,11 @@
             <div class="lg:col-span-5 grid grid-cols-2 gap-3">
               <div class="p-3.5 rounded-2xl bg-brand-black/80 border border-white/10 text-center">
                 <p class="font-oswald text-2xl sm:text-3xl font-black text-white">{{ devices.length }}</p>
-                <p class="text-[10px] text-brand-grayText uppercase font-mono">Tổng Thiết Bị</p>
+                <p class="text-xs text-brand-grayText uppercase font-mono">Loại / Mã thiết bị</p>
               </div>
               <div class="p-3.5 rounded-2xl bg-brand-black/80 border border-emerald-500/30 text-center">
                 <p class="font-oswald text-2xl sm:text-3xl font-black text-emerald-400">{{ inStockCount }}</p>
-                <p class="text-[10px] text-emerald-300 uppercase font-mono">Sẵn Sàng Mượn</p>
+                <p class="text-xs text-emerald-300 uppercase font-mono">Chiếc / Bộ có sẵn</p>
               </div>
               <div class="p-3.5 rounded-2xl bg-brand-black/80 border border-cyan-500/30 text-center">
                 <p class="font-oswald text-2xl sm:text-3xl font-black text-cyan-400">{{ auditQueue.length }}</p>
@@ -330,7 +422,7 @@
               </div>
               <div class="p-3.5 rounded-2xl bg-brand-black/80 border border-brand-red/30 text-center">
                 <p class="font-oswald text-2xl sm:text-3xl font-black text-brand-red">{{ faultyCount }}</p>
-                <p class="text-[10px] text-rose-300 uppercase font-mono">Báo Lỗi / Khóa</p>
+                <p class="text-xs text-rose-300 uppercase font-mono">Loại / Mã có lỗi, khóa</p>
               </div>
             </div>
 
@@ -375,7 +467,7 @@
               @click="activeStatusFilter = 'IN_STOCK'"
               :class="activeStatusFilter === 'IN_STOCK' ? 'bg-emerald-600 text-white shadow-md' : 'text-brand-grayText'"
               class="py-1.5 px-3 rounded-lg transition">
-              Trong kho ({{ inStockCount }})
+              Có sẵn ({{ inStockCount }} chiếc/bộ)
             </button>
             <button 
               @click="activeStatusFilter = 'FAULTY'"
@@ -631,7 +723,9 @@
               </div>
 
               <div>
-                <span v-if="device.status === 'Trong kho'" class="text-[10px] font-oswald uppercase font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5">
+                <span v-if="device.service_status && device.service_status !== 'ready' || device.unavailable_quantity && device.tracking_mode !== 'quantity'" class="text-sm font-bold text-amber-300">{{ device.service_status === 'locked' ? 'Đã khóa' : 'Bảo trì' }}</span>
+                <span v-else-if="isManagedResource(device)" class="text-sm font-bold text-cyan-300">{{ resourceDeviceLabel(device) }}</span>
+                <span v-else-if="device.status === 'Trong kho'" class="text-[10px] font-oswald uppercase font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1.5">
                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                   <span>TRONG KHO</span>
                 </span>
@@ -699,6 +793,13 @@
               </div>
             </div>
 
+            <div v-if="device.stock" class="mx-4 mb-3 p-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm space-y-2">
+              <div class="flex justify-between text-white"><strong>{{ device.usage_mode === 'lab' ? 'Trống hiện tại' : 'Có thể mượn' }}</strong><strong class="text-cyan-300">{{ device.stock.available }} / {{ device.stock.total }}</strong></div>
+              <p class="text-slate-300">{{ device.usage_mode === 'lab' ? 'Đã giữ chỗ / đang dùng' : 'Đang mượn' }}: {{ device.stock.borrowed }} · Chờ kiểm tra: {{ device.stock.pending }} · Cách ly: {{ device.stock.faulty }} · Bảo trì: {{ device.stock.maintenance }}</p>
+              <p v-if="device.usage_mode === 'lab'" class="text-brand-grayText">{{ device.open_hour }}–{{ device.close_hour }} · Tối đa {{ device.max_minutes }} phút/buổi. Xem lịch để chọn giờ.</p>
+              <button v-if="device.tracking_mode === 'quantity' && device.usage_mode !== 'lab'" @click="openDeviceLoans(device)" class="text-amber-300 underline">Xem người đang giữ & trả từng phần</button>
+            </div>
+
             <!-- Spec Sheet 2 Cột -->
             <div class="mx-4 p-3 rounded-xl bg-brand-black/90 border border-white/5 space-y-2 text-xs font-mono">
               <div class="flex items-center justify-between text-[11px] pb-1.5 border-b border-white/5">
@@ -735,7 +836,14 @@
 
               <div>
                 <button 
-                  v-if="device.status === 'Trong kho'"
+                  v-if="isManagedResource(device)"
+                  @click="device.usage_mode === 'lab' ? openDeviceAgenda(device) : openResourceDialog('borrow', device)"
+                  :disabled="schemaVersion < 2 || (device.usage_mode !== 'lab' && (!device.stock || device.stock.available < 1))"
+                  class="btn-red-cta px-3 py-2 rounded-lg font-bold text-sm disabled:opacity-50">
+                  {{ device.usage_mode === 'lab' ? 'Xem lịch / Đăng ký' : 'Mượn số lượng' }}
+                </button>
+                <button
+                  v-else-if="device.status === 'Trong kho' && isDeviceAvailable(device)"
                   @click="openTxModal(device, 'Mượn mới')"
                   class="btn-red-cta px-3.5 py-1.5 rounded-lg font-bold text-xs uppercase flex items-center space-x-1 shadow-md">
                   <span>MƯỢN MÁY</span>
@@ -756,6 +864,7 @@
                    <span class="max-w-[140px]">CHỜ NGƯỜI GIỮ TRẢ KHO</span>
                 </button>
                 <button v-else-if="device.status === 'Chờ kiểm định'" disabled class="text-cyan-300 text-xs px-3 py-1.5">CHỜ CÁN BỘ KIỂM TRA</button>
+                <button v-else-if="device.status === 'Trong kho' && !isDeviceAvailable(device)" disabled class="text-amber-300 text-sm px-3 py-1.5">Đang bảo trì / Khóa</button>
                 <div v-else class="flex items-center space-x-1">
                   <button 
                     v-if="adminUser"
@@ -1602,7 +1711,9 @@
                   <td class="text-slate-300 max-w-[140px] truncate" :title="dev.specs_note">{{ dev.specs_note }}</td>
                   <td class="text-slate-300 max-w-[150px] truncate" :title="dev.accessories">{{ dev.accessories }}</td>
                   <td>
-                    <span v-if="dev.status === 'Trong kho'" class="badge badge-success badge-xs font-oswald uppercase font-bold">Trong kho</span>
+                    <span v-if="isManagedResource(dev)" class="text-sm text-cyan-300">{{ resourceDeviceLabel(dev) }} · {{ dev.stock ? dev.stock.available : 0 }}/{{ dev.total_quantity }} trống</span>
+                    <span v-else-if="dev.service_status && dev.service_status !== 'ready' || dev.unavailable_quantity" class="text-sm text-amber-300">Bảo trì / Khóa</span>
+                    <span v-else-if="dev.status === 'Trong kho'" class="badge badge-success badge-xs font-oswald uppercase font-bold">Trong kho</span>
                     <span v-else-if="dev.status === 'Đang mượn'" class="badge badge-warning badge-xs font-oswald uppercase font-bold">Đang mượn: {{ dev.holder_name }}</span>
                     <span v-else-if="dev.status === 'Chờ kiểm định'" class="badge badge-info badge-xs font-oswald uppercase font-bold">Chờ kiểm định</span>
                     <span v-else class="badge badge-error badge-xs font-oswald uppercase font-bold">Báo lỗi/Khóa</span>
@@ -1777,7 +1888,7 @@
                 </div>
                 <div class="flex items-center justify-between text-slate-300 truncate">
                   <span>URL Web:</span>
-                  <a href="https://roablab-devices.github.io/roablabdevide/" target="_blank" class="text-cyan-400 underline truncate max-w-[170px]">roablab-devices.github.io...</a>
+                  <a href="https://roablab-devices.github.io/roablabdevice/" target="_blank" class="text-cyan-400 underline truncate max-w-[170px]">roablab-devices.github.io...</a>
                 </div>
               </div>
             </div>
@@ -3019,6 +3130,29 @@
     </div>
   </dialog>
 
+  <dialog :open="!!resourceDialog" class="modal modal-bottom sm:modal-middle bg-black/85 backdrop-blur-sm z-50">
+    <form v-if="resourceDialog" @submit.prevent="submitResourceDialog" class="modal-box bg-brand-card border border-brand-border rounded-2xl p-5 max-w-lg text-sm space-y-4">
+      <div class="flex justify-between items-start gap-3"><div><h2 class="text-xl font-bold text-white">{{ resourceDialogTitle }}</h2><p class="mt-1 text-slate-300">{{ resourceDialog.device.name }}</p></div><button type="button" @click="closeResourceDialog" :disabled="resourceBusy" aria-label="Đóng" class="btn btn-sm bg-white/10 text-white">Đóng</button></div>
+      <p v-if="resourceDialog.record && resourceDialog.kind === 'return'" class="text-amber-300">Phiếu này còn giữ {{ resourceDialog.record.outstanding }} chiếc. Có thể trả từng phần.</p>
+      <p v-if="resourceDialog.kind === 'borrow'" class="text-cyan-300">Hiện có thể mượn: {{ resourceDialog.device.stock ? resourceDialog.device.stock.available : 0 }} chiếc.</p>
+      <p v-if="resourceDialog.kind === 'return'" class="text-slate-300">Nếu các chiếc có tình trạng khác nhau, tạo từng lần trả riêng cho mỗi nhóm tốt/thiếu/hỏng.</p>
+      <p v-if="resourceDialog.kind === 'finish' && resourceForm.condition === 'faulty'" class="text-amber-300">Báo lỗi sẽ cách ly toàn bộ {{ resourceDialog.record.quantity }} chiếc của buổi này để cán bộ kiểm tra.</p>
+      <label v-if="resourceDialog.kind !== 'finish'" class="block text-slate-300">Số lượng<input v-model.number="resourceForm.quantity" :disabled="resourceRetryPending" type="number" min="1" :max="resourceDialogMax" step="1" required class="resource-input mt-1"></label>
+      <template v-if="['booking','block'].includes(resourceDialog.kind)">
+        <p class="text-slate-300">Giờ Việt Nam · {{ resourceDialog.device.open_hour }}–{{ resourceDialog.device.close_hour }} · Tối đa {{ resourceDialog.device.max_minutes }} phút · Nghỉ giữa buổi {{ resourceDialog.device.buffer_minutes }} phút.</p>
+        <label class="block text-slate-300">Bắt đầu<input v-model="resourceForm.start_at" :disabled="resourceRetryPending" type="datetime-local" required class="resource-input mt-1"></label>
+        <label class="block text-slate-300">Kết thúc<input v-model="resourceForm.end_at" :disabled="resourceRetryPending" type="datetime-local" required class="resource-input mt-1"></label>
+        <p v-if="resourceRangeAvailability !== null" :class="resourceRangeAvailability < resourceForm.quantity ? 'text-red-300' : 'text-emerald-300'">Còn tối đa {{ resourceRangeAvailability }} chiếc trong khoảng chọn. Máy chủ kiểm tra lại khi gửi và khi duyệt.</p>
+      </template>
+      <label v-if="['borrow','booking','block'].includes(resourceDialog.kind)" class="block text-slate-300">{{ resourceDialog.kind === 'block' ? 'Lý do chặn lịch' : 'Mục đích / nhóm sử dụng' }}<input v-model="resourceForm.purpose" :disabled="resourceRetryPending" maxlength="500" required class="resource-input mt-1" placeholder="Tên đề tài, nhóm và công việc dự kiến"></label>
+      <label v-if="['return','finish'].includes(resourceDialog.kind)" class="block text-slate-300">Tình trạng<select v-model="resourceForm.condition" :disabled="resourceRetryPending" class="resource-input mt-1"><option value="good">Hoạt động tốt, đủ phụ kiện</option><option v-if="resourceDialog.kind === 'return'" value="missing">Thiếu phụ kiện</option><option value="faulty">Báo lỗi / Hỏng</option></select></label>
+      <label class="block text-slate-300">Ghi chú {{ resourceForm.condition !== 'good' && ['return','finish'].includes(resourceDialog.kind) ? '(bắt buộc khi thiếu/hỏng)' : '' }}<textarea v-model="resourceForm.note" :disabled="resourceRetryPending" maxlength="2000" :required="resourceForm.condition !== 'good' && ['return','finish'].includes(resourceDialog.kind)" rows="3" class="resource-input mt-1"></textarea></label>
+      <p v-if="resourceError" role="alert" class="text-red-300 whitespace-pre-line">{{ resourceError }}</p>
+      <p v-if="resourceRetryPending" class="text-amber-300">Chưa xác nhận được kết quả. Bấm gửi lại sẽ dùng cùng mã yêu cầu để tránh ghi trùng. Kiểm tra danh sách trước khi tạo phiếu khác.</p>
+      <button type="submit" :disabled="resourceBusy || !resourceDialogValid" class="btn-red-cta w-full py-3 rounded-xl font-bold disabled:opacity-50">{{ resourceBusy ? 'Đang ghi nhận…' : resourceRetryPending ? 'Kiểm tra / Gửi lại yêu cầu' : 'Xác nhận' }}</button>
+    </form>
+  </dialog>
+
   <!-- MODAL: ADD/EDIT DEVICE -->
   <dialog :open="showDeviceEditModal" class="modal modal-bottom sm:modal-middle bg-black/85 backdrop-blur-sm z-50">
     <div class="modal-box bg-brand-card border border-brand-border p-6 rounded-2xl max-w-xl w-full mx-auto shadow-2xl space-y-4">
@@ -3117,6 +3251,8 @@
               <option value="MCU/SBC">MCU/SBC</option>
               <option value="Cảm biến">Cảm biến</option>
               <option value="Động cơ/Driver">Động cơ/Driver</option>
+              <option value="Robot">Robot</option>
+              <option value="Thiết bị thí nghiệm">Thiết bị thí nghiệm</option>
               <option value="Mạch giao tiếp">Mạch giao tiếp</option>
               <option value="Khác">Khác</option>
             </select>
@@ -3127,6 +3263,24 @@
           <label class="block font-oswald uppercase font-bold text-slate-300 mb-1">Tên Thiết Bị Đầy Đủ *:</label>
           <input v-model="deviceForm.name" type="text" placeholder="VD: Kit Raspberry Pi 5 8GB..." class="w-full bg-brand-black border border-brand-border rounded-xl px-3 py-2 text-white focus:border-brand-red">
         </div>
+
+        <fieldset class="border border-cyan-500/30 rounded-xl p-3 space-y-3 text-sm">
+          <legend class="px-2 text-cyan-300 font-bold">Cách sử dụng & số lượng</legend>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <label class="text-slate-300">Cách sử dụng<select v-model="deviceForm.usage_mode" class="resource-input mt-1"><option value="portable">Mượn mang đi</option><option value="lab">Đăng ký tại lab</option></select></label>
+            <label class="text-slate-300">Cách quản lý<select v-model="deviceForm.tracking_mode" @change="deviceForm.tracking_mode === 'individual' && (deviceForm.total_quantity = 1)" class="resource-input mt-1"><option value="individual">Từng chiếc có mã riêng</option><option value="quantity">Số lượng chung, cùng model</option></select></label>
+            <label class="text-slate-300">Tổng số lượng<input v-model.number="deviceForm.total_quantity" :disabled="deviceForm.tracking_mode === 'individual'" type="number" min="1" max="100000" step="1" class="resource-input mt-1"></label>
+            <label class="text-slate-300">Số đang bảo trì riêng<input v-model.number="deviceForm.unavailable_quantity" type="number" min="0" :max="deviceForm.total_quantity" step="1" class="resource-input mt-1"></label>
+            <label class="text-slate-300">Tình trạng sử dụng<select v-model="deviceForm.service_status" class="resource-input mt-1"><option value="ready">Sẵn sàng</option><option value="maintenance">Bảo trì toàn bộ</option><option value="locked">Khóa sử dụng</option></select></label>
+          </div>
+          <p class="text-slate-400">Số mượn, chờ kiểm định và cách ly tự tính từ phiếu. Không nhập trùng vào số bảo trì riêng. Thiết bị đã có lịch sử số lượng/lịch cần giữ nguyên cách quản lý.</p>
+          <div v-if="deviceForm.usage_mode === 'lab'" class="grid sm:grid-cols-2 gap-3">
+            <label class="text-slate-300">Mở cửa<input v-model="deviceForm.open_hour" type="time" class="resource-input mt-1"></label>
+            <label class="text-slate-300">Đóng cửa<input v-model="deviceForm.close_hour" type="time" class="resource-input mt-1"></label>
+            <label class="text-slate-300">Tối đa phút/buổi<input v-model.number="deviceForm.max_minutes" type="number" min="15" max="1440" step="1" class="resource-input mt-1"></label>
+            <label class="text-slate-300">Nghỉ giữa buổi (phút)<input v-model.number="deviceForm.buffer_minutes" type="number" min="0" max="120" step="1" class="resource-input mt-1"></label>
+          </div>
+        </fieldset>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -3237,6 +3391,10 @@
 <script>
 const { createApp } = Vue;
 const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxBFWGR5ZKr3xftHUVd0GY3p1MzITlFBXfh7PBVzNr1Xiu_7ozLLVWT9JX8_H3hECz-2A/exec';
+function resourceDefaults(device = {}) {
+  return { usage_mode: device.usage_mode || 'portable', tracking_mode: device.tracking_mode || 'individual', total_quantity: Number(device.total_quantity || 1), unavailable_quantity: Number(device.unavailable_quantity || 0), service_status: device.service_status || 'ready', open_hour: device.open_hour || '08:00', close_hour: device.close_hour || '18:00', max_minutes: Number(device.max_minutes || 240), buffer_minutes: Number(device.buffer_minutes || 0) };
+}
+function savedStaffToken() { try { return sessionStorage.getItem('slam_staff_session') || ''; } catch { return ''; } }
 
 function loadSavedStaff() {
   try {
@@ -3251,6 +3409,13 @@ createApp({
   data() {
     return {
       connectionError: '',
+      schemaVersion: 1,
+      loans: [], quantityReturns: [], bookings: [],
+      resourceTab: 'AGENDA', agendaDeviceId: '', agendaFilter: 'all', agendaAnchor: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10),
+      selectedBookingId: '', onlyMyLoans: true, loansDeviceId: '',
+      resourceDialog: null, resourceForm: {}, resourceError: '', resourceBusy: false, resourceReviewNote: '', quantityAuditNotes: {},
+      resourceRetryPending: false, resourceRequestId: '', resourceClock: Date.now(),
+      staffSession: savedStaffToken(),
       dataRequestId: 0,
       deletingDeviceIds: [],
       deviceUploads: { golden_upload: null, document_upload: null },
@@ -3286,7 +3451,7 @@ createApp({
       searchQuery: '',
       activeStatusFilter: 'ALL',
       selectedCategory: 'Tất cả',
-      categories: ['Tất cả', 'MCU/SBC', 'Cảm biến', 'Động cơ/Driver', 'Mạch giao tiếp'],
+      categories: ['Tất cả', 'Robot', 'Thiết bị thí nghiệm', 'MCU/SBC', 'Cảm biến', 'Động cơ/Driver', 'Mạch giao tiếp', 'Khác'],
 
       // Admin CRUD
       adminDeviceSearch: '',
@@ -3296,6 +3461,7 @@ createApp({
       isSavingDevice: false,
       savingDeviceStatus: '',
       deviceForm: {
+        ...resourceDefaults(),
         device_id: '',
         name: '',
         category: 'MCU/SBC',
@@ -3348,6 +3514,60 @@ createApp({
     };
   },
   computed: {
+    resourceTabs() { return [{id:'AGENDA',label:'Lịch sử dụng'}, {id:'LOANS',label:'Phiếu mượn số lượng'}, ...(this.canEditDevices ? [{id:'QA',label:'Kiểm định số lượng (' + this.quantityReturns.filter(r => r.audit_status === 'pending').length + ')'}] : [])]; },
+    labDevices() { return this.devices.filter(d => d.usage_mode === 'lab'); },
+    selectedBooking() { return this.bookings.find(b => b.booking_id === this.selectedBookingId) || null; },
+    agendaDays() {
+      const anchor = new Date(this.agendaAnchor + 'T00:00:00+07:00');
+      const day = new Date(anchor.getTime() + 7 * 3600000).getUTCDay();
+      const monday = anchor.getTime() - ((day + 6) % 7) * 86400000;
+      return Array.from({length:7}, (_, i) => {
+        const date = new Date(monday + i * 86400000 + 7 * 3600000).toISOString().slice(0,10);
+        return {date, label: (i === 6 ? 'CN' : 'T' + (i+2)) + ' · ' + date.slice(8,10) + '/' + date.slice(5,7), items: this.bookings.filter(b => this.bookingMatchesFilters(b) && this.localDateString(b.start_at) === date).sort((a,b) => a.start_at.localeCompare(b.start_at))};
+      });
+    },
+    agendaWeekLabel() { return this.agendaDays.length ? this.agendaDays[0].label + ' – ' + this.agendaDays[6].label : ''; },
+    attentionBookings() { return this.bookings.filter(b => this.bookingMatchesFilters(b) && (['pending','active','fault_hold'].includes(b.status) || (b.status === 'approved' && b.kind !== 'block' && new Date(b.end_at).getTime() < this.resourceClock))); },
+    visibleLoans() { return this.loans.filter(l => (!this.onlyMyLoans || this.isResourceOwner(l)) && (!this.loansDeviceId || l.device_id === this.loansDeviceId)).slice().reverse(); },
+    resourceDialogTitle() { return this.resourceDialog ? {borrow:'Mượn theo số lượng',return:'Trả thiết bị',booking:'Đăng ký sử dụng tại lab',block:'Chặn lịch thiết bị',finish:'Kết thúc buổi sử dụng'}[this.resourceDialog.kind] : ''; },
+    resourceDialogMax() {
+      if (!this.resourceDialog) return 1;
+      if (this.resourceDialog.kind === 'return') return this.resourceDialog.record.outstanding;
+      if (this.resourceDialog.kind === 'borrow') return this.resourceDialog.device.stock ? this.resourceDialog.device.stock.available : 0;
+      return Number(this.resourceDialog.device.total_quantity || 1);
+    },
+    resourceRangeAvailability() {
+      if (!this.resourceDialog || !['booking','block'].includes(this.resourceDialog.kind) || !this.resourceForm.start_at || !this.resourceForm.end_at) return null;
+      const device = this.resourceDialog.device;
+      const start = new Date(this.resourceForm.start_at + '+07:00').getTime(), end = new Date(this.resourceForm.end_at + '+07:00').getTime() + Number(device.buffer_minutes || 0) * 60000;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+      if (device.service_status !== 'ready') return 0;
+      const events = []; let fault = 0;
+      this.bookings.filter(b => b.device_id === device.device_id).forEach(b => {
+        if (b.status === 'fault_hold') fault += Number(b.quantity);
+        if (!['approved','active'].includes(b.status)) return;
+        const s = new Date(b.start_at).getTime(); let e = new Date(b.end_at).getTime() + Number(device.buffer_minutes || 0) * 60000;
+        if (b.status === 'active' && e <= this.resourceClock) e = Infinity;
+        if (s < end && e > start) events.push([Math.max(start,s),Number(b.quantity)],[Math.min(end,e),-Number(b.quantity)]);
+      });
+      events.sort((a,b) => a[0]-b[0] || a[1]-b[1]); let count=0,peak=0;
+      events.forEach(e => {count+=e[1];peak=Math.max(peak,count);});
+      return Math.max(0, Number(device.total_quantity) - Number(device.unavailable_quantity || 0) - fault - peak);
+    },
+    resourceDialogValid() {
+      if (!this.resourceDialog || this.schemaVersion < 2) return false;
+      if (this.resourceRetryPending) return true;
+      const kind = this.resourceDialog.kind, f = this.resourceForm;
+      if (kind !== 'finish' && (!Number.isInteger(f.quantity) || f.quantity < 1 || f.quantity > this.resourceDialogMax)) return false;
+      if (['borrow','booking','block'].includes(kind) && !String(f.purpose || '').trim()) return false;
+      if (['return','finish'].includes(kind) && f.condition !== 'good' && !String(f.note || '').trim()) return false;
+      if (['booking','block'].includes(kind)) {
+        const device = this.resourceDialog.device;
+        const start = new Date(f.start_at + '+07:00').getTime(), end = new Date(f.end_at + '+07:00').getTime();
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start <= this.resourceClock || end <= start || f.start_at.slice(0,10) !== f.end_at.slice(0,10) || f.start_at.slice(11,16) < device.open_hour || f.end_at.slice(11,16) > device.close_hour || end-start > Number(device.max_minutes)*60000 || this.resourceRangeAvailability < f.quantity) return false;
+      }
+      return kind === 'block' ? this.canEditDevices : kind === 'finish' ? (this.canEditDevices || this.isResourceOwner(this.resourceDialog.record)) : !!this.currentStudent;
+    },
     adminStudentResults() {
       const query = this.normalizeStudentSearch(this.adminStudentSearch);
       const tokens = query.split(/\s+/).filter(Boolean);
@@ -3357,8 +3577,13 @@ createApp({
           const text = this.normalizeStudentSearch(String(user.user_id || '') + ' ' + String(user.full_name || ''));
           return tokens.every(token => text.includes(token));
         })
-        .map(user => ({ ...user, borrowed_devices: this.devices.filter(device =>
-          device.status === 'Đang mượn' && String(device.holder_id || '').trim().toLowerCase() === String(user.user_id || '').trim().toLowerCase()) }));
+        .map(user => {
+          const borrowed = this.devices.filter(device => device.status === 'Đang mượn' && String(device.holder_id || '').trim().toLowerCase() === String(user.user_id || '').trim().toLowerCase());
+          const totals = new Map();
+          this.loans.filter(l => l.outstanding > 0 && String(l.user_id).toLowerCase() === String(user.user_id).toLowerCase()).forEach(l => totals.set(l.device_id, (totals.get(l.device_id) || 0) + l.outstanding));
+          for (const [id, quantity] of totals) borrowed.push({device_id:id, name:this.deviceName(id) + ' · Còn giữ ' + quantity});
+          return {...user, borrowed_devices:borrowed};
+        });
     },
     canEditDevices() {
       return !!this.adminUser && ['ADMIN', 'INSPECTOR'].includes(this.adminUser.role);
@@ -3366,16 +3591,16 @@ createApp({
     hasApiUrl() { return !!this.apiUrl.trim(); },
     myHoldingCount() {
       if (!this.currentStudent) return 0;
-      return this.devices.filter(d => d.status === 'Đang mượn' && d.holder_id === this.currentStudent.user_id).length;
+      return this.devices.filter(d => d.status === 'Đang mượn' && this.isHeldByCurrentStudent(d)).length + this.loans.filter(l => this.isResourceOwner(l)).reduce((sum,l) => sum + l.outstanding,0);
     },
     inStockCount() {
-      return this.devices.filter(d => d.status === 'Trong kho').length;
+      return this.devices.reduce((sum,d) => sum + (d.stock ? d.stock.available : this.isDeviceAvailable(d) ? 1 : 0),0);
     },
     borrowedCount() {
-      return this.devices.filter(d => d.status === 'Đang mượn').length;
+      return this.devices.filter(d => d.stock ? d.stock.borrowed > 0 : d.status === 'Đang mượn').length;
     },
     faultyCount() {
-      return this.devices.filter(d => d.status === 'Báo lỗi/Khóa').length;
+      return this.devices.filter(d => d.service_status && d.service_status !== 'ready' || (d.stock ? d.stock.faulty > 0 || d.stock.maintenance > 0 : d.status === 'Báo lỗi/Khóa')).length;
     },
     pendingAuditCount() {
       return this.auditQueue.filter(a => !a.audit_status || a.audit_status === 'Chờ kiểm định').length;
@@ -3389,11 +3614,11 @@ createApp({
     filteredDevices() {
       return this.devices.filter(d => {
         if (this.activeStatusFilter === 'MY_HOLDING') {
-          if (!this.currentStudent || d.status !== 'Đang mượn' || d.holder_id !== this.currentStudent.user_id) return false;
+          if (!this.currentStudent || !(d.status === 'Đang mượn' && this.isHeldByCurrentStudent(d) || this.loans.some(l => l.device_id === d.device_id && this.isResourceOwner(l) && l.outstanding > 0))) return false;
         } else if (this.activeStatusFilter === 'IN_STOCK') {
-          if (d.status !== 'Trong kho') return false;
+          if (!this.isDeviceAvailable(d)) return false;
         } else if (this.activeStatusFilter === 'FAULTY') {
-          if (d.status !== 'Báo lỗi/Khóa') return false;
+          if (!(d.status === 'Báo lỗi/Khóa' || d.service_status && d.service_status !== 'ready' || d.stock && (d.stock.faulty > 0 || d.stock.maintenance > 0))) return false;
         }
 
         if (this.selectedCategory !== 'Tất cả' && d.category !== this.selectedCategory) return false;
@@ -3448,9 +3673,100 @@ createApp({
   },
   mounted() {
     this.fetchData();
+    setInterval(() => { this.resourceClock = Date.now(); }, 30000);
   },
   methods: {
+    localDateString(value) { return new Date((value ? new Date(value).getTime() : Date.now()) + 7 * 3600000).toISOString().slice(0,10); },
+    formatResourceDate(value) { if (!value) return ''; return new Date(value).toLocaleString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); },
+    bookingTime(b) { const format = v => new Date(v).toLocaleTimeString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit'}); return format(b.start_at) + '–' + format(b.end_at); },
+    deviceById(id) { return this.devices.find(d => d.device_id === id); },
+    deviceName(id) { const d = this.deviceById(id); return d ? d.name : id; },
+    isManagedResource(d) { return d.usage_mode === 'lab' || d.tracking_mode === 'quantity'; },
+    isDeviceAvailable(d) { return d.stock ? d.stock.available > 0 : d.status === 'Trong kho' && (!d.service_status || d.service_status === 'ready') && !d.unavailable_quantity; },
+    isResourceOwner(record) { return !!this.currentStudent && String(record.user_id).toLowerCase() === String(this.currentStudent.user_id).toLowerCase(); },
+    resourceDeviceLabel(d) { if (d.service_status === 'maintenance') return 'Bảo trì'; if (d.service_status === 'locked') return 'Đã khóa'; return d.usage_mode === 'lab' ? 'Dùng tại lab' : 'Kho số lượng'; },
+    resourceConditionLabel(c) { return {good:'Hoạt động tốt',missing:'Thiếu phụ kiện',faulty:'Báo lỗi / Hỏng'}[c] || c; },
+    returnStatusLabel(s) { return {pending:'Chờ kiểm định',approved:'Đã nhập lại kho',rejected:'Đang cách ly',repaired:'Đã sửa và nhập lại kho'}[s] || s; },
+    bookingStatusLabel(b) { const labels={pending:'Chờ duyệt',approved:b.kind === 'block' ? 'Đã chặn lịch' : 'Đã duyệt',active:'Đang sử dụng',completed:'Hoàn thành',cancelled:'Đã hủy',rejected:'Từ chối',no_show:'Không đến',fault_hold:'Báo lỗi · Đang cách ly'}; return b.status === 'active' && new Date(b.end_at).getTime() < this.resourceClock ? 'Đang dùng · Quá giờ' : labels[b.status] || b.status; },
+    bookingBadgeClass(s) { return ['active','approved'].includes(s) ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-100' : ['pending','fault_hold'].includes(s) ? 'border-amber-500/40 bg-amber-500/10 text-amber-100' : 'border-brand-border bg-white/5 text-slate-300'; },
+    bookingStatusTextClass(s) { return ['pending','fault_hold'].includes(s) ? 'text-amber-300' : 'text-cyan-300'; },
+    bookingMatchesFilters(b) { return (!this.agendaDeviceId || b.device_id === this.agendaDeviceId) && (this.agendaFilter === 'all' || this.agendaFilter === 'mine' && this.isResourceOwner(b) || this.agendaFilter === 'pending' && b.status === 'pending'); },
+    moveAgendaWeek(direction) { this.agendaAnchor = this.localDateString(new Date(new Date(this.agendaAnchor + 'T00:00:00+07:00').getTime() + direction * 7 * 86400000).toISOString()); },
+    openResourceWorkspace(tab) { this.currentViewMode = 'RESOURCES'; this.resourceTab = tab; this.resourceClock = Date.now(); },
+    openDeviceAgenda(device) { this.agendaDeviceId = device.device_id; this.agendaFilter = 'all'; this.openResourceWorkspace('AGENDA'); },
+    openDeviceLoans(device) { this.loansDeviceId = device.device_id; this.onlyMyLoans = false; this.openResourceWorkspace('LOANS'); },
+    openBookingForSelected() {
+      const device = this.deviceById(this.agendaDeviceId);
+      if (!device) { this.showToast('Chọn thiết bị tại lab trước khi đăng ký.', 'info'); return; }
+      this.openResourceDialog('booking',device);
+    },
+    returnsForLoan(id) { return this.quantityReturns.filter(r => r.loan_id === id); },
+    bookingActions(b) {
+      const actions = []; const staff = this.canEditDevices, owner = this.isResourceOwner(b); const now=this.resourceClock;
+      if (staff && b.status === 'pending') { if (new Date(b.start_at).getTime() > now) actions.push({id:'approve',label:'Duyệt lịch'}); actions.push({id:'reject',label:'Từ chối'}); }
+      if ((staff || owner) && ['pending','approved'].includes(b.status)) actions.push({id:'cancel',label:'Hủy lịch'});
+      if ((staff || owner) && b.kind !== 'block' && b.status === 'approved' && now >= new Date(b.start_at).getTime() && now < new Date(b.end_at).getTime()) actions.push({id:'start',label:'Bắt đầu sử dụng'});
+      if ((staff || owner) && b.status === 'active') actions.push({id:'finish',label:'Kết thúc sử dụng'});
+      if (staff && b.kind !== 'block' && b.status === 'approved' && now >= new Date(b.end_at).getTime()) actions.push({id:'no_show',label:'Đánh dấu không đến'});
+      if (staff && b.status === 'fault_hold') actions.push({id:'repair',label:'Đã sửa xong'});
+      return actions;
+    },
+    openResourceDialog(kind, device, record = null) {
+      if (!device || this.schemaVersion < 2) { this.showToast('Cập nhật Apps Script và nâng cấp dữ liệu trước.', 'error'); return; }
+      if (!['block','finish'].includes(kind) && !this.currentStudent) { this.showToast('Nhập MSSV được cấp phép ở thanh trên cùng trước.', 'error'); return; }
+      if (kind === 'block' && !this.canEditDevices) return;
+      this.resourceDialog = {kind,device,record,user_id:this.currentStudent ? this.currentStudent.user_id : ''}; this.resourceForm = {quantity:1,purpose:'',start_at:'',end_at:'',condition:'good',note:''};
+      this.resourceError = ''; this.resourceRetryPending = false; this.resourceClock=Date.now();
+      this.resourceRequestId = 'REQ-' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+    },
+    closeResourceDialog() { if (!this.resourceBusy) this.resourceDialog = null; },
+    async resourcePost(payload) {
+      const response = await this.requestApi({method:'POST',body:JSON.stringify(payload)});
+      const result = await response.json();
+      if (!result.success) {
+        if (/Phiên|đăng nhập lại/.test(result.message || '') && this.adminUser) { this.staffSession=''; try {sessionStorage.removeItem('slam_staff_session');} catch {} this.adminUser=null; this.openStaffLoginModal(); }
+        const error = new Error(result.message || 'Không thể thực hiện.'); error.confirmed=true; throw error;
+      }
+      return result;
+    },
+    async submitResourceDialog() {
+      if (this.resourceBusy || !this.resourceDialogValid) return;
+      const dialog = this.resourceDialog, form = this.resourceForm;
+      const payload = {device_id:dialog.device.device_id,user_id:dialog.user_id, quantity:form.quantity,purpose:form.purpose,note:form.note,request_id:this.resourceRequestId};
+      if (dialog.kind === 'borrow') payload.action='inventory_borrow';
+      if (dialog.kind === 'return') { payload.action='inventory_return'; payload.loan_id=dialog.record.loan_id; payload.condition=form.condition; }
+      if (['booking','block'].includes(dialog.kind)) { payload.action=dialog.kind === 'block' ? 'booking_block' : 'booking_create'; payload.start_at=form.start_at + '+07:00'; payload.end_at=form.end_at + '+07:00'; }
+      if (dialog.kind === 'finish') { payload.action='booking_update'; payload.booking_id=dialog.record.booking_id; payload.transition='finish'; payload.condition=form.condition; }
+      this.resourceBusy=true; this.resourceError='';
+      try { const result=await this.resourcePost(payload); this.resourceDialog=null; this.showToast(result.message,'success'); await this.fetchData(); }
+      catch (error) { this.resourceError=error.message; this.resourceRetryPending=!error.confirmed; }
+      finally { this.resourceBusy=false; }
+    },
+    async performBookingAction(booking, action) {
+      if (this.resourceBusy) return;
+      if (action === 'finish') { this.openResourceDialog('finish',this.deviceById(booking.device_id),booking); return; }
+      if (['cancel','reject','no_show'].includes(action) && !confirm('Xác nhận ' + ({cancel:'hủy lịch',reject:'từ chối lịch',no_show:'người đăng ký không đến'}[action]) + '?')) return;
+      if (action === 'repair' && !this.resourceReviewNote.trim()) { this.showToast('Nhập ghi chú xác nhận sửa chữa trước.','error'); return; }
+      this.resourceBusy=true;
+      try { const result=await this.resourcePost({action:'booking_update',booking_id:booking.booking_id,transition:action,user_id:this.currentStudent ? this.currentStudent.user_id : '',note:this.resourceReviewNote}); this.resourceReviewNote=''; this.showToast(result.message,'success'); await this.fetchData(); }
+      catch(error) { this.showToast(error.message,'error'); } finally { this.resourceBusy=false; }
+    },
+    async auditQuantityReturn(record, decision) {
+      if (this.resourceBusy || !this.canEditDevices) return;
+      const note=String(this.quantityAuditNotes[record.return_id] || '').trim();
+      if (decision === 'repaired' && !note) {this.showToast('Nhập ghi chú sửa chữa trước.','error');return;}
+      this.resourceBusy=true;
+      try { const result=await this.resourcePost({action:decision === 'repaired' ? 'inventory_repair_return' : 'inventory_audit_return',return_id:record.return_id,decision,note}); this.showToast(result.message,'success'); await this.fetchData(); }
+      catch(error) {this.showToast(error.message,'error');} finally {this.resourceBusy=false;}
+    },
+    async upgradeResourceSchema() {
+      if (this.resourceBusy || !this.adminUser || this.adminUser.role !== 'ADMIN') return;
+      this.resourceBusy=true;
+      try {const result=await this.resourcePost({action:'admin_upgrade_schema'});this.showToast(result.message,'success');await this.fetchData();}
+      catch(error) {this.showToast(error.message,'error');} finally {this.resourceBusy=false;}
+    },
     clearLoadedData() {
+      this.loans=[]; this.quantityReturns=[]; this.bookings=[]; this.schemaVersion=1;
       this.devices = [];
       this.studentsWhitelist = [];
       this.auditQueue = [];
@@ -3459,6 +3775,11 @@ createApp({
     },
     requestApi(options) {
       if (!this.apiUrl.trim()) throw new Error('Chưa cấu hình URL API.');
+      if (options && options.method === 'POST' && options.body) {
+        const payload=JSON.parse(options.body);
+        if (this.staffSession && !['admin_login','admin_change_password'].includes(payload.action)) payload.staff_session=this.staffSession;
+        options={...options,body:JSON.stringify(payload)};
+      }
       return fetch(this.apiUrl, options);
     },
     formatDriveImageUrl(url) {
@@ -3483,7 +3804,7 @@ createApp({
       if (el) el.scrollIntoView({ behavior: 'smooth' });
     },
     isHeldByCurrentStudent(device) {
-      return this.currentStudent && device.holder_id === this.currentStudent.user_id;
+      return this.currentStudent && String(device.holder_id || '').toLowerCase() === String(this.currentStudent.user_id).toLowerCase();
     },
     getHolderPhone(device) {
       const holderId = String(device.holder_id || '').trim().toLowerCase();
@@ -3613,6 +3934,8 @@ createApp({
           const result = await res.json();
           if (result.success && result.user) {
             this.adminUser = result.user;
+            this.staffSession = result.staff_session || '';
+            try {sessionStorage.setItem('slam_staff_session',this.staffSession);} catch {}
             localStorage.setItem('slam_staff_user', JSON.stringify(this.adminUser));
             this.showStaffLoginModal = false;
             this.showToast(result.message || 'Đăng nhập Quản trị viên thành công!', 'success');
@@ -3629,9 +3952,13 @@ createApp({
         this.staffLoginError = 'Lỗi kết nối: ' + e.message;
       } finally {
         this.isStaffLoggingIn = false;
+        this.staffLoginForm.pin = '';
       }
     },
     logoutStaff() {
+      if (this.staffSession) this.requestApi({method:'POST',body:JSON.stringify({action:'admin_logout'})}).catch(() => {});
+      this.staffSession='';
+      try {sessionStorage.removeItem('slam_staff_session');} catch {}
       this.adminUser = null;
       localStorage.removeItem('slam_staff_user');
       this.currentViewMode = 'SHOWROOM';
@@ -3653,6 +3980,12 @@ createApp({
           this.studentsWhitelist = data.whitelist || [];
           this.auditQueue = data.audit_queue || [];
           this.editLogs = data.edit_logs || [];
+          this.schemaVersion=Number(data.schema_version || 1);
+          this.loans=data.loans || []; this.quantityReturns=data.quantity_returns || []; this.bookings=data.bookings || []; this.resourceClock=Date.now();
+          if (this.resourceDialog) {
+            const device=this.deviceById(this.resourceDialog.device.device_id);
+            if (device) this.resourceDialog.device=device; else this.resourceDialog=null;
+          }
           this.checkStudentWhitelist();
         }
       } catch (err) {
@@ -3686,6 +4019,7 @@ createApp({
       this.clearAllDeviceUploads();
       this.isEditingExistingDevice = false;
       this.deviceForm = {
+        ...resourceDefaults(),
         device_id: '',
         name: '',
         category: 'MCU/SBC',
@@ -3705,6 +4039,7 @@ createApp({
       this.clearAllDeviceUploads();
       this.isEditingExistingDevice = true;
       this.deviceForm = {
+        ...resourceDefaults(device),
         device_id: device.device_id,
         name: device.name,
         category: device.category,
@@ -4044,7 +4379,7 @@ createApp({
       if (!device || !this.currentStudent ||
           !['Mượn mới', 'Trả về kho'].includes(this.txType) ||
           (this.txType === 'Mượn mới' && (device.status !== 'Trong kho' || device.holder_id)) ||
-          (this.txType === 'Trả về kho' && (device.status !== 'Đang mượn' || device.holder_id !== this.currentStudent.user_id))) {
+          (this.txType === 'Trả về kho' && (device.status !== 'Đang mượn' || !this.isHeldByCurrentStudent(device)))) {
         this.showToast('Không thể thực hiện: kiểm tra lại trạng thái và người đang giữ thiết bị. Bàn giao cần trả kho rồi mượn lại.', 'error');
         return;
       }
@@ -4111,6 +4446,8 @@ createApp({
         return;
       }
       if (cleanUrl !== this.apiUrl) {
+        this.staffSession='';
+        try {sessionStorage.removeItem('slam_staff_session');} catch {}
         this.clearLoadedData();
         this.adminUser = null;
         localStorage.removeItem('slam_staff_user');
