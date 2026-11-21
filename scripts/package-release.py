@@ -9,7 +9,7 @@ import zipfile
 root = Path(__file__).resolve().parents[1]
 files = ["index.html", "Code.gs", "README.md", "scripts/package-release.py",
          "tests/backend-security.cjs", "tests/frontend-live.cjs", "tests/inventory-harness.cjs",
-         "tests/inventory-booking.cjs", "tests/inventory-hours.cjs", "tests/frontend-resources.cjs", "tests/frontend-validation.cjs", "tests/frontend-template.cjs"]
+         "tests/inventory-booking.cjs", "tests/inventory-hours.cjs", "tests/inventory-sessions.cjs", "tests/frontend-resources.cjs", "tests/frontend-validation.cjs", "tests/frontend-template.cjs"]
 
 class LocalAssets(HTMLParser):
     def handle_starttag(self, tag, attrs):

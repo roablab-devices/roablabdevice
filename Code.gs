@@ -128,11 +128,11 @@ function uploadDeviceFiles(payload) {
 }
 
 // Inventory v2. This source is embedded in Code.gs for one-file Apps Script deployment.
-const INVENTORY_DEVICE_HEADERS = ['usage_mode', 'tracking_mode', 'total_quantity', 'unavailable_quantity', 'service_status', 'open_hour', 'close_hour', 'max_minutes', 'buffer_minutes'];
+const INVENTORY_DEVICE_HEADERS = ['usage_mode', 'tracking_mode', 'total_quantity', 'unavailable_quantity', 'service_status', 'open_hour', 'close_hour', 'max_minutes', 'buffer_minutes', 'morning_start', 'morning_end', 'afternoon_start', 'afternoon_end'];
 const INVENTORY_TABLES = {
   Loans: ['loan_id', 'device_id', 'user_id', 'user_name', 'quantity', 'purpose', 'note', 'created_at', 'request_id', 'request_hash'],
   Returns: ['return_id', 'loan_id', 'device_id', 'user_id', 'user_name', 'quantity', 'condition', 'note', 'created_at', 'audit_status', 'audited_by', 'audit_note', 'audited_at', 'repaired_by', 'repaired_at', 'request_id', 'request_hash'],
-  Bookings: ['booking_id', 'device_id', 'user_id', 'user_name', 'quantity', 'start_at', 'end_at', 'purpose', 'note', 'status', 'created_at', 'updated_at', 'reviewed_by', 'review_note', 'actual_start', 'actual_end', 'end_condition', 'request_id', 'kind', 'request_hash', 'transition_request_id', 'transition_hash']
+  Bookings: ['booking_id', 'device_id', 'user_id', 'user_name', 'quantity', 'start_at', 'end_at', 'purpose', 'note', 'status', 'created_at', 'updated_at', 'reviewed_by', 'review_note', 'actual_start', 'actual_end', 'end_condition', 'request_id', 'kind', 'request_hash', 'transition_request_id', 'transition_hash', 'session']
 };
 
 function inventoryKey(value) { return String(value || '').trim().toLowerCase(); }
@@ -199,7 +199,9 @@ function inventoryDisplayConfig(row) {
     usage_mode: value(13, 'portable'), tracking_mode: value(14, 'individual'),
     total_quantity: value(15, 1), unavailable_quantity: value(16, 0),
     service_status: value(17, 'ready'), open_hour: hour(18, '08:00', 'Giờ mở cửa'), close_hour: hour(19, '18:00', 'Giờ đóng cửa'),
-    max_minutes: value(20, 240), buffer_minutes: value(21, 0)
+    max_minutes: value(20, 240), buffer_minutes: value(21, 0),
+    morning_start: hour(22, '08:00', 'Bắt đầu buổi sáng'), morning_end: hour(23, '12:00', 'Kết thúc buổi sáng'),
+    afternoon_start: hour(24, '13:00', 'Bắt đầu buổi chiều'), afternoon_end: hour(25, '17:00', 'Kết thúc buổi chiều')
   };
 }
 function inventoryConfig(row) {
@@ -209,12 +211,15 @@ function inventoryConfig(row) {
     unavailable_quantity: row[16] === '' || row[16] == null ? 0 : inventoryInt(row[16], 0, 100000),
     service_status: String(row[17] || 'ready'), open_hour: inventoryHour(row[18], '08:00', 'Giờ mở cửa'), close_hour: inventoryHour(row[19], '18:00', 'Giờ đóng cửa'),
     max_minutes: row[20] === '' || row[20] == null ? 240 : inventoryInt(row[20], 15, 1440),
-    buffer_minutes: row[21] === '' || row[21] == null ? 0 : inventoryInt(row[21], 0, 120)
+    buffer_minutes: row[21] === '' || row[21] == null ? 0 : inventoryInt(row[21], 0, 120),
+    morning_start: inventoryHour(row[22], '08:00', 'Bắt đầu buổi sáng'), morning_end: inventoryHour(row[23], '12:00', 'Kết thúc buổi sáng'),
+    afternoon_start: inventoryHour(row[24], '13:00', 'Bắt đầu buổi chiều'), afternoon_end: inventoryHour(row[25], '17:00', 'Kết thúc buổi chiều')
   };
   if (!['portable', 'lab'].includes(config.usage_mode) || !['individual', 'quantity'].includes(config.tracking_mode) || !['ready', 'maintenance', 'locked'].includes(config.service_status)) throw new Error('Cấu hình thiết bị không hợp lệ.');
   if (config.tracking_mode === 'individual' && config.total_quantity !== 1) throw new Error('Thiết bị có mã riêng phải có số lượng bằng 1.');
   if (config.unavailable_quantity > config.total_quantity) throw new Error('Số lượng bảo trì vượt tổng số lượng.');
   if (![config.open_hour, config.close_hour].every(v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v)) || config.open_hour >= config.close_hour) throw new Error('Giờ mở cửa phải trước giờ đóng cửa trong cùng ngày.');
+  if (config.usage_mode === 'lab' && (config.morning_start >= config.morning_end || config.afternoon_start >= config.afternoon_end || config.morning_end > config.afternoon_start)) throw new Error('Giờ các buổi phải theo thứ tự: bắt đầu sáng, kết thúc sáng, bắt đầu chiều, kết thúc chiều.');
   return config;
 }
 function inventorySchemaReady(ss) {
@@ -230,6 +235,8 @@ function inventorySchemaReady(ss) {
 function inventoryWriteConfig(sheet, rowIndex, config) {
   const hours = sheet.getRange(rowIndex, 19, 1, 2);
   if (typeof hours.setNumberFormat === 'function') hours.setNumberFormat('@');
+  const sessions = sheet.getRange(rowIndex, 23, 1, 4);
+  if (typeof sessions.setNumberFormat === 'function') sessions.setNumberFormat('@');
   setTextMatrix(sheet, rowIndex, 14, [INVENTORY_DEVICE_HEADERS.map(h => config[h])]);
 }
 function upgradeInventorySchema() {
@@ -250,7 +257,7 @@ function inventoryUpgrade(ss) {
     const table = ss.getSheetByName(name);
     if (table && table.getLastRow()) {
       const head = table.getDataRange().getValues()[0];
-      if (!INVENTORY_TABLES[name].every((h, i) => head[i] === h)) throw new Error('Sheet ' + name + ' đã tồn tại với cấu trúc khác.');
+      if (!INVENTORY_TABLES[name].every((h, i) => head[i] === h || name === 'Bookings' && i === 22 && !head[i])) throw new Error('Sheet ' + name + ' đã tồn tại với cấu trúc khác.');
     }
   });
   rows.slice(1).filter(row => row[0]).forEach(row => {
@@ -267,6 +274,7 @@ function inventoryUpgrade(ss) {
     let table = ss.getSheetByName(name);
     if (!table) table = ss.insertSheet(name);
     if (!table.getLastRow()) appendTextRow(table, INVENTORY_TABLES[name]);
+    else setTextMatrix(table, 1, 1, [INVENTORY_TABLES[name]]);
     if (table.setFrozenRows) table.setFrozenRows(1);
   });
   return {success: true, message: 'Đã nâng cấp số lượng và lịch sử dụng. Dữ liệu mượn cũ được giữ nguyên.'};
@@ -309,7 +317,10 @@ function inventoryCredential(ss, id) {
 }
 function inventoryHash(text) { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8).map(byte => ('0' + (byte & 255).toString(16)).slice(-2)).join(''); }
 function inventoryRequestHash(payload, user) {
-  return inventoryHash(JSON.stringify([payload.action, inventoryKey(user.user_id), inventoryKey(payload.device_id), String(payload.quantity || ''), String(payload.loan_id || ''), String(payload.booking_id || ''), String(payload.transition || ''), inventoryText(payload.purpose,500), inventoryText(payload.note), String(payload.condition || ''), payload.start_at ? inventoryDate(payload.start_at) : '', payload.end_at ? inventoryDate(payload.end_at) : '']));
+  const intent = [payload.action, inventoryKey(user.user_id), inventoryKey(payload.device_id), String(payload.quantity || ''), String(payload.loan_id || ''), String(payload.booking_id || ''), String(payload.transition || ''), inventoryText(payload.purpose,500), inventoryText(payload.note), String(payload.condition || ''), payload.start_at ? inventoryDate(payload.start_at) : '', payload.end_at ? inventoryDate(payload.end_at) : ''];
+  // Preserve hashes of existing requests so a lost response can still be retried.
+  if (payload.booking_date != null || payload.booking_session != null) intent.push(String(payload.booking_date || ''), String(payload.booking_session || ''));
+  return inventoryHash(JSON.stringify(intent));
 }
 function inventorySession(user) {
   const cache = CacheService.getScriptCache();
@@ -361,13 +372,27 @@ function inventoryPeak(bookings, device, start, end, excludeId, now) {
   return peak;
 }
 function inventoryBookingRange(payload, device) {
-  const start = inventoryDate(payload.start_at), end = inventoryDate(payload.end_at);
+  let start, end, session;
+  if (payload.booking_date != null || payload.booking_session != null) {
+    session = String(payload.booking_session || '');
+    const day = String(payload.booking_date || '');
+    if (!['morning', 'afternoon'].includes(session) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('Chọn ngày và buổi sáng hoặc chiều hợp lệ.');
+    start = inventoryDate(day + 'T' + device.config[session + '_start'] + ':00+07:00');
+    end = inventoryDate(day + 'T' + device.config[session + '_end'] + ':00+07:00');
+    if (payload.start_at && inventoryDate(payload.start_at) !== start || payload.end_at && inventoryDate(payload.end_at) !== end) throw new Error('Giờ đăng ký phải khớp buổi đã cấu hình. Tải lại lịch rồi chọn buổi.');
+  } else {
+    // Older clients may send timestamps, but may only reserve a complete configured session.
+    start = inventoryDate(payload.start_at); end = inventoryDate(payload.end_at);
+    const local = value => new Date(new Date(value).getTime() + 7 * 3600000).toISOString().slice(11, 23);
+    session = ['morning', 'afternoon'].find(key => local(start) === device.config[key + '_start'] + ':00.000' && local(end) === device.config[key + '_end'] + ':00.000');
+    if (!session) throw new Error('Chỉ đăng ký theo buổi sáng hoặc chiều. Tải lại trang để chọn buổi.');
+  }
   const s = new Date(start).getTime(), e = new Date(end).getTime();
-  if (s <= Date.now() || e <= s || s > Date.now() + 366 * 86400000) throw new Error('Chọn lịch tương lai trong vòng 1 năm, giờ kết thúc sau giờ bắt đầu.');
+  if (s <= Date.now() || e <= s || s > Date.now() + 366 * 86400000) throw new Error('Buổi đã bắt đầu hoặc ngày ngoài giới hạn 1 năm. Chọn buổi khác.');
   const localStart = new Date(s + 7 * 3600000).toISOString();
   const localEnd = new Date(e + 7 * 3600000).toISOString();
   if (localStart.slice(0, 10) !== localEnd.slice(0, 10) || localStart.slice(11, 16) < device.config.open_hour || localEnd.slice(11, 16) > device.config.close_hour || (e - s) > device.config.max_minutes * 60000) throw new Error('Lịch vượt giờ mở cửa, qua ngày hoặc quá thời lượng tối đa.');
-  return {start, end};
+  return {start, end, session};
 }
 function inventoryCheckCapacity(device, state, quantity, start, end, excludeId) {
   if (device.config.service_status !== 'ready') throw new Error('Thiết bị đang bảo trì hoặc bị khóa.');
@@ -387,6 +412,13 @@ function inventoryValidateDeviceChange(ss, payload, oldRow) {
   const draft = base.slice();
   INVENTORY_DEVICE_HEADERS.forEach((h, i) => { if (payload[h] != null) draft[13 + i] = payload[h]; });
   const config = inventoryConfig(draft);
+  if (config.usage_mode === 'lab') {
+    ['morning', 'afternoon'].forEach(session => {
+      const start = config[session + '_start'], end = config[session + '_end'];
+      const minutes = time => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+      if (start < config.open_hour || end > config.close_hour || minutes(end) - minutes(start) > config.max_minutes) throw new Error('Giờ buổi ' + (session === 'morning' ? 'sáng' : 'chiều') + ' phải nằm trong giờ mở cửa và không vượt thời lượng tối đa.');
+    });
+  }
   if (!oldRow) return config;
   // Validate the proposed configuration, not the malformed previous hours;
   // otherwise staff could never save a repair through the UI.
@@ -486,7 +518,7 @@ function inventoryHandle(ss, payload, staff) {
     const purpose = inventoryText(payload.purpose, 500);
     if (!purpose) throw new Error('Nhập mục đích sử dụng hoặc lý do chặn lịch.');
     inventoryCheckCapacity(device, state, quantity, range.start, range.end);
-    const record = {booking_id: inventoryId('BK'), device_id: device.device_id, user_id: user.user_id, user_name: user.full_name, quantity, start_at: range.start, end_at: range.end, purpose, note: inventoryText(payload.note), status: kind === 'block' ? 'approved' : 'pending', created_at: inventoryNow(), updated_at: inventoryNow(), reviewed_by: kind === 'block' ? user.full_name : '', request_id: requestId, request_hash: requestHash, kind};
+    const record = {booking_id: inventoryId('BK'), device_id: device.device_id, user_id: user.user_id, user_name: user.full_name, quantity, start_at: range.start, end_at: range.end, session: range.session, purpose, note: inventoryText(payload.note), status: kind === 'block' ? 'approved' : 'pending', created_at: inventoryNow(), updated_at: inventoryNow(), reviewed_by: kind === 'block' ? user.full_name : '', request_id: requestId, request_hash: requestHash, kind};
     inventoryAppend(ss, 'Bookings', record);
     return {success: true, message: kind === 'block' ? 'Đã chặn lịch.' : 'Đã gửi lịch, chờ cán bộ duyệt.', booking_id: record.booking_id};
   }

@@ -19,7 +19,7 @@ Hai model khác nhau phải có hai mã danh mục. Thiết bị theo từng chi
 
 1. Tạo bản sao Google Spreadsheet hiện tại và lưu phiên bản Apps Script đang chạy để có điểm khôi phục.
 2. Mở **Extensions → Apps Script** từ Spreadsheet đúng của lab. Thay nội dung `Code.gs` bằng file trong gói này. Giữ cấu hình Drive/Telegram thực tế của lab trong môi trường của bạn; không đưa thông tin bí mật vào Git.
-3. Chạy hàm **`upgradeInventorySchema`** từ trình soạn thảo Apps Script. Hàm này bổ sung cấu trúc, giữ nguyên dữ liệu cũ. Có thể chạy lại. Nếu thấy báo xung đột cột, xử lý cột riêng đang chiếm N–V trước; không đổi tên hoặc xóa dữ liệu một cách tùy ý.
+3. Chạy hàm **`upgradeInventorySchema`** từ trình soạn thảo Apps Script, kể cả khi đã dùng bản quản lý số lượng trước đó. Hàm bổ sung cột giờ hai buổi W–Z của `Devices` và cột `session` W của `Bookings`, giữ nguyên dữ liệu cũ. Có thể chạy lại. Nếu thấy báo xung đột cột, xử lý cột riêng đang chiếm N–Z trước; không đổi tên hoặc xóa dữ liệu một cách tùy ý.
 4. Cập nhật **deployment Web App hiện có** sang phiên bản Apps Script mới để giữ URL `/exec`. Theo [hướng dẫn quản lý deployment của Google](https://developers.google.com/apps-script/concepts/deployments), việc lưu mã chưa tự cập nhật phiên bản Web App đang phát hành.
 5. Phát hành `index.html` mới tới website ROAB LAB hiện có. Nếu tạo deployment mới làm thay đổi URL, cấu hình lại URL trong trang và kiểm tra đúng Spreadsheet.
 6. Đăng xuất rồi đăng nhập lại tài khoản cán bộ. Trang mới dùng phiên cán bộ do backend cấp; tên/vai trò cũ lưu trong trình duyệt không cấp quyền ghi dữ liệu.
@@ -56,7 +56,7 @@ Nếu cần xử lý dữ liệu trước khi cập nhật mã: trong `Devices`,
 ## Đăng ký robot và thiết bị cố định
 
 1. Bấm **Xem lịch / Đăng ký** trên thiết bị hoặc vào **Lịch sử dụng**, chọn thiết bị.
-2. Xem lịch tuần. Chọn giờ bắt đầu, kết thúc, số lượng, mục đích và nhóm sử dụng. Ngày giờ nhập luôn được hiểu theo Việt Nam, kể cả máy tính đặt múi giờ khác.
+2. Xem lịch tuần, chọn **ngày sử dụng**, bấm một trong hai ô **Sáng / Chiều**, nhập số lượng và mục đích/nhóm sử dụng. Không nhập giờ bắt đầu/kết thúc. Mặc định sáng **08:00–12:00**, chiều **13:00–17:00**, theo giờ Việt Nam kể cả máy tính đặt múi giờ khác. Mỗi ô hiện số lượng còn trong toàn bộ buổi cho số lượng đang yêu cầu.
 3. Lịch mới có trạng thái **Chờ duyệt**, chưa giữ chỗ. Cán bộ chọn lịch và bấm **Duyệt lịch**. Máy chủ kiểm tra sức chứa lần nữa trong cùng khóa ghi.
 4. Khi đến lab, chủ lịch hoặc cán bộ bấm **Bắt đầu sử dụng** trong khung giờ đã duyệt. Cuối buổi bấm **Kết thúc sử dụng**, khai báo tình trạng.
 5. Cán bộ có thể từ chối, hủy, đánh dấu không đến sau giờ kết thúc hoặc chặn một phần/toàn bộ số lượng cho lớp học và bảo trì theo lịch.
@@ -65,14 +65,15 @@ Luồng: **Chờ duyệt → Đã duyệt → Đang sử dụng → Hoàn thành
 
 Quy tắc vận hành:
 
-- Mỗi lịch trong một ngày, trong giờ mở cửa, không quá thời lượng tối đa; đăng ký trước tối đa 1 năm. Khung giờ kết thúc là đầu mở: 09–10 giờ và 10–11 giờ có thể nối tiếp nếu thời gian nghỉ là 0.
+- Mỗi lịch giữ số lượng cho **trọn một buổi**, đăng ký trước tối đa 1 năm. Buổi đã bắt đầu, không đủ số lượng, đang bảo trì hoặc có cấu hình không hợp lệ bị khóa và hiện lý do. Không đăng ký lùi vào một buổi đang diễn ra.
+- Cán bộ vào **Sửa thiết bị → Cách sử dụng & số lượng** để sửa giờ bắt đầu/kết thúc của sáng và chiều. Hai buổi không chồng nhau, nằm trong giờ mở cửa và không vượt thời lượng tối đa. Nếu kéo dài buổi, cần tăng giới hạn phút tương ứng. Thay giờ buổi chỉ áp dụng cho lịch mới; lịch đã tạo và lịch cũ theo giờ tự chọn vẫn giữ nguyên mốc thời gian đã lưu.
 - Sức chứa tính theo lượng dùng đồng thời cao nhất trong toàn bộ khoảng chọn, không cộng nhầm các lịch chỉ nối tiếp nhau. Thời gian nghỉ sau buổi được tính khi kiểm tra trùng.
 - Buổi đang dùng quá giờ chưa kết thúc tiếp tục giữ số lượng; không tự đánh dấu đã bàn giao. Cán bộ cần kiểm tra thực tế, kết thúc hoặc xử lý sự cố trước khi cho nhóm sau bắt đầu.
 - Kết thúc báo hỏng sẽ cách ly toàn bộ số lượng trong buổi đó. Cán bộ xác nhận sửa xong mới giải phóng số lượng. Lịch tương lai có thể cần hủy và đặt lại nếu sự cố làm thiếu sức chứa.
 - **Bảo trì toàn bộ / Khóa sử dụng** ngăn lịch mới và bắt đầu sử dụng. Số bảo trì riêng giảm sức chứa. Các lịch đã duyệt vẫn hiển thị để cán bộ chủ động xử lý.
 - Danh sách **Cần xử lý** đưa cả lịch chờ duyệt, đang dùng, quá giờ và cách ly ngoài tuần đang xem lên để tránh bỏ sót.
 
-Nếu nút **Xác nhận** chưa bấm được, phần **Cần điều chỉnh để xác nhận** trong form liệt kê các điều kiện chưa đạt: thiếu thông tin, ngoài giờ mở cửa, quá thời lượng, giờ bắt đầu đã qua hoặc thiếu số lượng trong khung giờ. Ví dụ chọn 12:03–18:03 khi máy giới hạn 240 phút và đóng cửa 18:00 sẽ hiện cả lỗi 360 phút và kết thúc muộn. Khi giờ bắt đầu còn ở tương lai, nút gợi ý có thể đặt kết thúc 16:03. Đây là điều chỉnh giờ của phiếu đăng ký; giới hạn thiết bị vẫn do cán bộ cấu hình.
+Nếu nút **Xác nhận** chưa bấm được, phần **Cần điều chỉnh để xác nhận** liệt kê điều kiện chưa đạt: thiếu mục đích, chưa chọn buổi, số lượng không hợp lệ hoặc buổi không còn nhận đăng ký. Ví dụ lúc 12:33, sáng cùng ngày đã khóa; có thể chọn chiều 13:00–17:00 nếu còn đủ số lượng. Đổi ngày để đăng ký sáng hôm sau. Cả đăng ký sử dụng và chặn lịch đều chọn theo buổi.
 
 ## Dữ liệu và tương thích
 
@@ -89,14 +90,20 @@ Giữ nguyên cột A–M của `Devices`, `Users` và `Logs`. Thêm vào `Devic
 | T | `close_hour` | 18:00 |
 | U | `max_minutes` | 240 |
 | V | `buffer_minutes` | 0 |
+| W | `morning_start` | 08:00 |
+| X | `morning_end` | 12:00 |
+| Y | `afternoon_start` | 13:00 |
+| Z | `afternoon_end` | 17:00 |
 
 Các sheet mới do hàm nâng cấp tạo đúng tiêu đề:
 
 - **Loans**: một dòng mỗi phiếu mượn số lượng; số còn giữ bằng số mượn trừ tổng các phiếu trả của chính phiếu đó.
 - **Returns**: một dòng mỗi lần trả, cùng kết luận kiểm định và thông tin sửa chữa.
-- **Bookings**: lịch dự kiến, trạng thái, người duyệt, thời điểm sử dụng thực tế và kết luận kết thúc.
+- **Bookings**: lịch dự kiến, trạng thái, người duyệt, thời điểm sử dụng thực tế và kết luận kết thúc. Cột W `session` mới lưu `morning`/`afternoon`; bản ghi cũ giữ trống và vẫn hiển thị giờ đã lưu.
 
 API GET bổ sung `schema_version`, `loans`, `quantity_returns`, `bookings`, cấu hình thiết bị và `stock`. API không trả token hoặc dấu kiểm tra nội dung yêu cầu. Các thao tác mới dùng `inventory_borrow`, `inventory_return`, `inventory_audit_return`, `inventory_repair_return`, `booking_create`, `booking_block`, `booking_update`, `admin_upgrade_schema`.
+
+`booking_create` và `booking_block` gửi `booking_date: "YYYY-MM-DD"` cùng `booking_session: "morning" | "afternoon"`. Máy chủ tự lấy giờ theo thiết bị, kiểm tra ngày/buổi và sức chứa dưới khóa ghi. Yêu cầu cũ gửi `start_at`/`end_at` chỉ được nhận nếu khớp chính xác một buổi đã cấu hình; không còn nhận khung giờ tùy ý. Mã yêu cầu cũ vẫn dùng được để kiểm tra/gửi lại kết quả đã ghi.
 
 Không đổi cách quản lý của thiết bị đang mượn/chờ kiểm định hoặc đã có lịch sử phiếu số lượng/lịch. Tạo mã mới nếu cần chuyển mô hình sau khi đã phát sinh lịch sử. Không xóa loại thiết bị có lịch sử mới; dùng khóa sử dụng để ngừng tiếp nhận. Backend từ chối giảm số lượng làm âm kho hoặc không đủ cho lịch đã duyệt.
 
@@ -112,6 +119,7 @@ Chạy trong thư mục dự án với Node.js 18 trở lên:
 rtk node tests/backend-security.cjs
 rtk node tests/inventory-booking.cjs
 rtk node tests/inventory-hours.cjs
+rtk node tests/inventory-sessions.cjs
 rtk node tests/frontend-live.cjs
 rtk node tests/frontend-resources.cjs
 rtk node tests/frontend-validation.cjs

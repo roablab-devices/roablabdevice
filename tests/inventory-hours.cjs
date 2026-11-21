@@ -58,7 +58,7 @@ test('Invalid legacy data identifies the device when a migration is blocked', ()
 test('Scheduled use still checks actual opening hours after Date normalization', () => {
   const h=harness({timezone:'Etc/GMT-7'});h.addDevice('ROBOT',{usage_mode:'lab',tracking_mode:'individual',total_quantity:1});
   const row=h.rows.Devices.find(r=>r[0]==='ROBOT');row[18]=new Date('1899-12-30T01:00:00Z');row[19]=new Date('1899-12-30T11:00:00Z');
-  const payload={action:'booking_create',device_id:'ROBOT',user_id:'sv01',quantity:1,purpose:'Test giờ',start_at:'2026-11-23T09:00:00+07:00',end_at:'2026-11-23T10:00:00+07:00',request_id:'hours-test-001'};
-  success(h.post(payload));assert.equal(h.post({...payload,request_id:'hours-test-002',start_at:'2026-11-23T07:30:00+07:00'}).success,false);
+  const payload={action:'booking_create',device_id:'ROBOT',user_id:'sv01',quantity:1,purpose:'Test giờ',booking_date:'2026-11-24',booking_session:'morning',request_id:'hours-test-001'};
+  success(h.post(payload));assert.equal(h.post({...payload,request_id:'hours-test-002',start_at:'2026-11-24T07:30:00+07:00'}).success,false);
 });
 console.log(`PASS: ${count} spreadsheet-hour regression scenarios`);

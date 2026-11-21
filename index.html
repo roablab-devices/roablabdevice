@@ -129,6 +129,7 @@
 .body-6 { font-size:.875rem; line-height:1.25rem; font-weight:400; }
 .title-4 { font-size:.875rem; line-height:1.25rem; font-weight:500; }
 .resource-input[aria-invalid="true"] { border-color:#F59E0B; }
+.resource-session:focus-within { outline:2px solid #06B6D4; outline-offset:2px; }
 </style>
 </head>
 <body class="min-h-screen flex flex-col antialiased selection:bg-brand-red selection:text-white">
@@ -808,7 +809,7 @@
             <div v-if="device.stock && !device.configuration_error" class="mx-4 mb-3 p-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 text-sm space-y-2">
               <div class="flex justify-between text-white"><strong>{{ device.usage_mode === 'lab' ? 'Trống hiện tại' : 'Có thể mượn' }}</strong><strong class="text-cyan-300">{{ device.stock.available }} / {{ device.stock.total }}</strong></div>
               <p class="text-slate-300">{{ device.usage_mode === 'lab' ? 'Đã giữ chỗ / đang dùng' : 'Đang mượn' }}: {{ device.stock.borrowed }} · Chờ kiểm tra: {{ device.stock.pending }} · Cách ly: {{ device.stock.faulty }} · Bảo trì: {{ device.stock.maintenance }}</p>
-              <p v-if="device.usage_mode === 'lab'" class="text-brand-grayText">{{ device.open_hour }}–{{ device.close_hour }} · Tối đa {{ device.max_minutes }} phút/buổi. Xem lịch để chọn giờ.</p>
+              <p v-if="device.usage_mode === 'lab'" class="text-brand-grayText">Sáng {{ device.morning_start || '08:00' }}–{{ device.morning_end || '12:00' }} · Chiều {{ device.afternoon_start || '13:00' }}–{{ device.afternoon_end || '17:00' }}. Xem lịch để chọn buổi.</p>
               <button v-if="device.tracking_mode === 'quantity' && device.usage_mode !== 'lab'" @click="openDeviceLoans(device)" class="text-amber-300 underline">Xem người đang giữ & trả từng phần</button>
             </div>
 
@@ -3155,11 +3156,18 @@
       <p v-if="resourceDialog.kind === 'finish' && resourceForm.condition === 'faulty'" class="text-amber-300">Báo lỗi sẽ cách ly toàn bộ {{ resourceDialog.record.quantity }} chiếc của buổi này để cán bộ kiểm tra.</p>
       <label v-if="resourceDialog.kind !== 'finish'" class="block text-slate-300">Số lượng<input v-model.number="resourceForm.quantity" :disabled="resourceRetryPending" :aria-invalid="resourceFieldInvalid('quantity')" aria-describedby="resource-validation" type="number" min="1" :max="resourceDialogMax" step="1" required class="resource-input mt-1"></label>
       <template v-if="['booking','block'].includes(resourceDialog.kind)">
-        <p class="text-slate-300">Giờ Việt Nam · {{ resourceDialog.device.open_hour }}–{{ resourceDialog.device.close_hour }} · Tối đa {{ resourceDialog.device.max_minutes }} phút · Nghỉ giữa buổi {{ resourceDialog.device.buffer_minutes }} phút.</p>
-        <label class="block text-slate-300">Bắt đầu<input v-model="resourceForm.start_at" :disabled="resourceRetryPending" :aria-invalid="resourceFieldInvalid('start_at')" aria-describedby="resource-validation" type="datetime-local" required class="resource-input mt-1"></label>
-        <label class="block text-slate-300">Kết thúc<input v-model="resourceForm.end_at" :disabled="resourceRetryPending" :aria-invalid="resourceFieldInvalid('end_at') || resourceFieldInvalid('duration') || resourceFieldInvalid('date_range')" aria-describedby="resource-validation" type="datetime-local" required class="resource-input mt-1"></label>
-        <button v-if="resourceSuggestedEnd" type="button" @click="applyResourceSuggestedEnd" class="text-cyan-300 underline text-sm py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400">Đặt giờ kết thúc {{ resourceSuggestedEnd.slice(11,16) }}</button>
-        <p v-if="resourceRangeAvailability !== null" :class="resourceRangeAvailability < resourceForm.quantity ? 'text-red-300' : resourceDialogValid ? 'text-emerald-300' : 'text-slate-300'">Số lượng còn trong khoảng chọn: {{ resourceRangeAvailability }} chiếc. Máy chủ kiểm tra lại khi gửi và khi duyệt.</p>
+        <label class="block text-slate-300">Ngày sử dụng<input v-model="resourceForm.booking_date" @change="resourceForm.booking_session = ''" :disabled="resourceRetryPending" :aria-invalid="resourceFieldInvalid('booking_date')" aria-describedby="resource-validation" type="date" :min="localDateString()" :max="localDateString(new Date(resourceClock + 366 * 86400000).toISOString())" required class="resource-input mt-1"></label>
+        <fieldset class="space-y-2" :aria-invalid="resourceFieldInvalid('booking_session')" aria-describedby="resource-validation">
+          <legend class="text-slate-300 mb-2">Chọn buổi sử dụng</legend>
+          <div class="grid grid-cols-2 gap-3">
+            <label v-for="slot in resourceSessions" :key="slot.id" class="resource-session rounded-xl border p-3 space-y-1" :class="[resourceForm.booking_session === slot.id ? 'border-cyan-400 bg-cyan-500/10' : 'border-brand-border bg-brand-black', slot.reason ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer']">
+              <span class="flex items-center justify-between gap-2"><span class="title-4 text-white">{{ slot.label }}</span><input v-model="resourceForm.booking_session" :value="slot.id" type="radio" name="booking-session" :disabled="resourceRetryPending || !!slot.reason" :aria-describedby="'booking-slot-' + slot.id" required class="accent-cyan-400"></span>
+              <span class="block body-6 text-slate-300">{{ slot.startHour }}–{{ slot.endHour }}</span>
+              <span :id="'booking-slot-' + slot.id" class="block body-6" :class="slot.reason ? 'text-amber-200' : 'text-emerald-300'">{{ slot.reason || ('Còn ' + slot.available + ' chiếc') }}</span>
+            </label>
+          </div>
+        </fieldset>
+        <p class="body-6 text-slate-400">Giờ Việt Nam. Đăng ký trọn buổi; buổi đã bắt đầu không nhận đăng ký mới. Máy chủ kiểm tra lại số lượng khi gửi và khi duyệt.</p>
       </template>
       <label v-if="['borrow','booking','block'].includes(resourceDialog.kind)" class="block text-slate-300">{{ resourceDialog.kind === 'block' ? 'Lý do chặn lịch' : 'Mục đích / nhóm sử dụng' }}<input v-model="resourceForm.purpose" :disabled="resourceRetryPending" :aria-invalid="resourceFieldInvalid('purpose')" aria-describedby="resource-validation" maxlength="500" required class="resource-input mt-1" placeholder="Tên đề tài, nhóm và công việc dự kiến"></label>
       <label v-if="['return','finish'].includes(resourceDialog.kind)" class="block text-slate-300">Tình trạng<select v-model="resourceForm.condition" :disabled="resourceRetryPending" class="resource-input mt-1"><option value="good">Hoạt động tốt, đủ phụ kiện</option><option v-if="resourceDialog.kind === 'return'" value="missing">Thiếu phụ kiện</option><option value="faulty">Báo lỗi / Hỏng</option></select></label>
@@ -3302,6 +3310,11 @@
             <label class="text-slate-300">Đóng cửa<input v-model="deviceForm.close_hour" type="time" class="resource-input mt-1"></label>
             <label class="text-slate-300">Tối đa phút/buổi<input v-model.number="deviceForm.max_minutes" type="number" min="15" max="1440" step="1" class="resource-input mt-1"></label>
             <label class="text-slate-300">Nghỉ giữa buổi (phút)<input v-model.number="deviceForm.buffer_minutes" type="number" min="0" max="120" step="1" class="resource-input mt-1"></label>
+            <label class="text-slate-300">Buổi sáng · Bắt đầu<input v-model="deviceForm.morning_start" type="time" required class="resource-input mt-1"></label>
+            <label class="text-slate-300">Buổi sáng · Kết thúc<input v-model="deviceForm.morning_end" type="time" required class="resource-input mt-1"></label>
+            <label class="text-slate-300">Buổi chiều · Bắt đầu<input v-model="deviceForm.afternoon_start" type="time" required class="resource-input mt-1"></label>
+            <label class="text-slate-300">Buổi chiều · Kết thúc<input v-model="deviceForm.afternoon_end" type="time" required class="resource-input mt-1"></label>
+            <p class="sm:col-span-2 text-slate-400">Hai buổi không chồng nhau, phải nằm trong giờ mở cửa và không vượt số phút tối đa mỗi buổi. Lịch đã tạo giữ nguyên giờ khi thay cấu hình.</p>
           </div>
         </fieldset>
 
@@ -3415,7 +3428,7 @@
 const { createApp } = Vue;
 const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxBFWGR5ZKr3xftHUVd0GY3p1MzITlFBXfh7PBVzNr1Xiu_7ozLLVWT9JX8_H3hECz-2A/exec';
 function resourceDefaults(device = {}) {
-  return { usage_mode: device.usage_mode || 'portable', tracking_mode: device.tracking_mode || 'individual', total_quantity: Number(device.total_quantity || 1), unavailable_quantity: Number(device.unavailable_quantity || 0), service_status: device.service_status || 'ready', open_hour: device.open_hour || '08:00', close_hour: device.close_hour || '18:00', max_minutes: Number(device.max_minutes || 240), buffer_minutes: Number(device.buffer_minutes || 0) };
+  return { usage_mode: device.usage_mode || 'portable', tracking_mode: device.tracking_mode || 'individual', total_quantity: Number(device.total_quantity || 1), unavailable_quantity: Number(device.unavailable_quantity || 0), service_status: device.service_status || 'ready', open_hour: device.open_hour || '08:00', close_hour: device.close_hour || '18:00', max_minutes: Number(device.max_minutes || 240), buffer_minutes: Number(device.buffer_minutes || 0), morning_start: device.morning_start || '08:00', morning_end: device.morning_end || '12:00', afternoon_start: device.afternoon_start || '13:00', afternoon_end: device.afternoon_end || '17:00' };
 }
 function savedStaffToken() { try { return sessionStorage.getItem('slam_staff_session') || ''; } catch { return ''; } }
 
@@ -3560,24 +3573,25 @@ createApp({
       if (this.resourceDialog.kind === 'borrow') return this.resourceDialog.device.stock ? this.resourceDialog.device.stock.available : 0;
       return Number(this.resourceDialog.device.total_quantity || 1);
     },
-    resourceRangeAvailability() {
-      if (!this.resourceDialog || !['booking','block'].includes(this.resourceDialog.kind) || !this.resourceForm.start_at || !this.resourceForm.end_at) return null;
-      const device = this.resourceDialog.device;
-      const start = new Date(this.resourceForm.start_at + '+07:00').getTime(), end = new Date(this.resourceForm.end_at + '+07:00').getTime() + Number(device.buffer_minutes || 0) * 60000;
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
-      if (device.service_status !== 'ready') return 0;
-      const events = []; let fault = 0;
-      this.bookings.filter(b => b.device_id === device.device_id).forEach(b => {
-        if (b.status === 'fault_hold') fault += Number(b.quantity);
-        if (!['approved','active'].includes(b.status)) return;
-        const s = new Date(b.start_at).getTime(); let e = new Date(b.end_at).getTime() + Number(device.buffer_minutes || 0) * 60000;
-        if (b.status === 'active' && e <= this.resourceClock) e = Infinity;
-        if (s < end && e > start) events.push([Math.max(start,s),Number(b.quantity)],[Math.min(end,e),-Number(b.quantity)]);
+    resourceSessions() {
+      if (!this.resourceDialog || !['booking','block'].includes(this.resourceDialog.kind)) return [];
+      const device = this.resourceDialog.device, config = resourceDefaults(device), day = this.resourceForm.booking_date;
+      return ['morning','afternoon'].map(id => {
+        const startHour=config[id + '_start'], endHour=config[id + '_end'];
+        const start=this.parseResourceLocalTime(day + 'T' + startHour), end=this.parseResourceLocalTime(day + 'T' + endHour);
+        const available=this.resourceAvailability(device,start,end);
+        let reason='';
+        if (!Number.isFinite(this.parseResourceLocalTime(day + 'T00:00'))) reason='Chọn ngày sử dụng';
+        else if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || startHour < device.open_hour || endHour > device.close_hour || end-start > Number(device.max_minutes)*60000) reason='Cần cán bộ sửa giờ buổi này';
+        else if (start <= this.resourceClock) reason='Buổi đã bắt đầu';
+        else if (start > this.resourceClock + 366*86400000) reason='Chỉ đăng ký trước tối đa 1 năm';
+        else if (device.service_status !== 'ready') reason='Thiết bị bảo trì hoặc bị khóa';
+        else if (available < this.resourceForm.quantity) reason='Chỉ còn ' + available + ' chiếc';
+        return {id,label:id === 'morning' ? 'Sáng' : 'Chiều',startHour,endHour,start,end,available,reason};
       });
-      events.sort((a,b) => a[0]-b[0] || a[1]-b[1]); let count=0,peak=0;
-      events.forEach(e => {count+=e[1];peak=Math.max(peak,count);});
-      return Math.max(0, Number(device.total_quantity) - Number(device.unavailable_quantity || 0) - fault - peak);
     },
+    resourceSelectedSession() { return this.resourceSessions.find(slot => slot.id === this.resourceForm.booking_session) || null; },
+    resourceRangeAvailability() { return this.resourceSelectedSession ? this.resourceSelectedSession.available : null; },
     resourceDialogIssues() {
       if (!this.resourceDialog) return [];
       const issues = [], add = (field,message) => issues.push({field,message});
@@ -3594,36 +3608,13 @@ createApp({
       if (['borrow','booking','block'].includes(kind) && !String(f.purpose || '').trim()) add('purpose',kind === 'block' ? 'Nhập lý do chặn lịch.' : 'Nhập mục đích hoặc nhóm sử dụng.');
       if (['return','finish'].includes(kind) && f.condition !== 'good' && !String(f.note || '').trim()) add('note','Ghi rõ tình trạng thiếu hoặc hỏng trước khi xác nhận.');
       if (['booking','block'].includes(kind)) {
-        const start = this.parseResourceLocalTime(f.start_at), end = this.parseResourceLocalTime(f.end_at);
-        if (!Number.isFinite(start)) add('start_at','Chọn ngày và giờ bắt đầu hợp lệ.');
-        else {
-          if (start <= this.resourceClock) add('start_at','Giờ bắt đầu phải ở tương lai. Hãy chọn giờ sau thời điểm hiện tại.');
-          if (start > this.resourceClock + 366 * 86400000) add('start_at','Chỉ đăng ký trước tối đa 1 năm.');
-          if (f.start_at.slice(11,16) < device.open_hour) add('start_at','Giờ bắt đầu phải từ ' + device.open_hour + ', khi lab mở cửa.');
-          if (f.start_at.slice(11,16) >= device.close_hour) add('start_at','Giờ bắt đầu phải trước giờ đóng cửa ' + device.close_hour + '.');
-        }
-        if (!Number.isFinite(end)) add('end_at','Chọn ngày và giờ kết thúc hợp lệ.');
-        else if (f.end_at.slice(11,16) > device.close_hour) add('end_at','Giờ kết thúc đang chọn là ' + f.end_at.slice(11,16) + ', sau giờ đóng cửa ' + device.close_hour + '.');
-        if (Number.isFinite(start) && Number.isFinite(end)) {
-          if (end <= start) add('end_at','Giờ kết thúc phải sau giờ bắt đầu.');
-          if (f.start_at.slice(0,10) !== f.end_at.slice(0,10)) add('date_range','Mỗi lịch sử dụng phải bắt đầu và kết thúc trong cùng ngày.');
-          if (end - start > Number(device.max_minutes) * 60000) add('duration','Thời lượng đang chọn là ' + Math.round((end-start)/60000) + ' phút, vượt giới hạn ' + device.max_minutes + ' phút mỗi buổi.');
-          if (end > start && this.resourceRangeAvailability !== null && this.resourceRangeAvailability < f.quantity) add('quantity','Khoảng giờ này còn tối đa ' + this.resourceRangeAvailability + ' chiếc. Giảm số lượng hoặc chọn giờ khác.');
-        }
+        if (!Number.isFinite(this.parseResourceLocalTime(f.booking_date + 'T00:00'))) add('booking_date','Chọn ngày sử dụng hợp lệ.');
+        if (!this.resourceSelectedSession) add('booking_session','Chọn buổi sáng hoặc chiều.');
+        else if (this.resourceSelectedSession.reason) add(this.resourceSelectedSession.reason.startsWith('Chỉ còn ') ? 'quantity' : 'booking_session', this.resourceSelectedSession.label + ': ' + this.resourceSelectedSession.reason + '. Chọn buổi hoặc ngày khác.');
       }
       return issues;
     },
     resourceDialogValid() { return !!this.resourceDialog && this.schemaVersion >= 2 && this.resourceDialogIssues.length === 0; },
-    resourceSuggestedEnd() {
-      if (!this.resourceDialog || this.resourceRetryPending || !['booking','block'].includes(this.resourceDialog.kind)) return '';
-      if (!this.resourceDialogIssues.some(i => ['end_at','duration','date_range'].includes(i.field))) return '';
-      const start=this.parseResourceLocalTime(this.resourceForm.start_at), device=this.resourceDialog.device;
-      if (!Number.isFinite(start) || start <= this.resourceClock || this.resourceForm.start_at.slice(11,16) < device.open_hour) return '';
-      const close=this.parseResourceLocalTime(this.resourceForm.start_at.slice(0,10) + 'T' + device.close_hour);
-      const end=Math.min(start + Number(device.max_minutes)*60000,close);
-      if (!Number.isFinite(end) || end <= start) return '';
-      return new Date(end+7*3600000).toISOString().slice(0,16);
-    },
     adminStudentResults() {
       const query = this.normalizeStudentSearch(this.adminStudentSearch);
       const tokens = query.split(/\s+/).filter(Boolean);
@@ -3738,10 +3729,25 @@ createApp({
       return Number.isFinite(time) && new Date(time+7*3600000).toISOString().slice(0,16) === value.slice(0,16) ? time : NaN;
     },
     resourceFieldInvalid(field) { return this.resourceDialogIssues.some(issue => issue.field === field); },
-    applyResourceSuggestedEnd() { if (this.resourceSuggestedEnd) { this.resourceForm.end_at=this.resourceSuggestedEnd; this.resourceError=''; } },
+    resourceAvailability(device, start, end) {
+      end += Number(device.buffer_minutes || 0) * 60000;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+      if (device.service_status !== 'ready') return 0;
+      const events=[]; let fault=0;
+      this.bookings.filter(b => b.device_id === device.device_id).forEach(b => {
+        if (b.status === 'fault_hold') fault += Number(b.quantity);
+        if (!['approved','active'].includes(b.status)) return;
+        const s=new Date(b.start_at).getTime(); let e=new Date(b.end_at).getTime() + Number(device.buffer_minutes || 0)*60000;
+        if (b.status === 'active' && e <= this.resourceClock) e=Infinity;
+        if (s < end && e > start) events.push([Math.max(start,s),Number(b.quantity)],[Math.min(end,e),-Number(b.quantity)]);
+      });
+      events.sort((a,b) => a[0]-b[0] || a[1]-b[1]); let count=0,peak=0;
+      events.forEach(e => {count+=e[1];peak=Math.max(peak,count);});
+      return Math.max(0,Number(device.total_quantity)-Number(device.unavailable_quantity || 0)-fault-peak);
+    },
     localDateString(value) { return new Date((value ? new Date(value).getTime() : Date.now()) + 7 * 3600000).toISOString().slice(0,10); },
     formatResourceDate(value) { if (!value) return ''; return new Date(value).toLocaleString('vi-VN', {timeZone:'Asia/Ho_Chi_Minh',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); },
-    bookingTime(b) { const format = v => new Date(v).toLocaleTimeString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit'}); return format(b.start_at) + '–' + format(b.end_at); },
+    bookingTime(b) { const format = v => new Date(v).toLocaleTimeString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',hour:'2-digit',minute:'2-digit'}); return ({morning:'Sáng · ',afternoon:'Chiều · '}[b.session] || '') + format(b.start_at) + '–' + format(b.end_at); },
     deviceById(id) { return this.devices.find(d => d.device_id === id); },
     deviceName(id) { const d = this.deviceById(id); return d ? d.name : id; },
     isManagedResource(d) { return d.usage_mode === 'lab' || d.tracking_mode === 'quantity'; },
@@ -3779,7 +3785,7 @@ createApp({
       if (device.configuration_error && ['borrow','booking','block'].includes(kind)) { this.showToast('Cán bộ cần sửa cấu hình: ' + device.configuration_error, 'error'); return; }
       if (!['block','finish'].includes(kind) && !this.currentStudent) { this.showToast('Nhập MSSV được cấp phép ở thanh trên cùng trước.', 'error'); return; }
       if (kind === 'block' && !this.canEditDevices) return;
-      this.resourceDialog = {kind,device,record,user_id:this.currentStudent ? this.currentStudent.user_id : ''}; this.resourceForm = {quantity:1,purpose:'',start_at:'',end_at:'',condition:'good',note:''};
+      this.resourceDialog = {kind,device,record,user_id:this.currentStudent ? this.currentStudent.user_id : ''}; this.resourceForm = {quantity:1,purpose:'',booking_date:this.localDateString(),booking_session:'',condition:'good',note:''};
       this.resourceError = ''; this.resourceRetryPending = false; this.resourceClock=Date.now();
       this.resourceRequestId = 'REQ-' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
     },
@@ -3801,7 +3807,7 @@ createApp({
       const payload = {device_id:dialog.device.device_id,user_id:dialog.user_id, quantity:form.quantity,purpose:form.purpose,note:form.note,request_id:this.resourceRequestId};
       if (dialog.kind === 'borrow') payload.action='inventory_borrow';
       if (dialog.kind === 'return') { payload.action='inventory_return'; payload.loan_id=dialog.record.loan_id; payload.condition=form.condition; }
-      if (['booking','block'].includes(dialog.kind)) { payload.action=dialog.kind === 'block' ? 'booking_block' : 'booking_create'; payload.start_at=form.start_at + '+07:00'; payload.end_at=form.end_at + '+07:00'; }
+      if (['booking','block'].includes(dialog.kind)) { payload.action=dialog.kind === 'block' ? 'booking_block' : 'booking_create'; payload.booking_date=form.booking_date; payload.booking_session=form.booking_session; }
       if (dialog.kind === 'finish') { payload.action='booking_update'; payload.booking_id=dialog.record.booking_id; payload.transition='finish'; payload.condition=form.condition; }
       this.resourceBusy=true; this.resourceError='';
       try { const result=await this.resourcePost(payload); this.resourceDialog=null; this.showToast(result.message,'success'); await this.fetchData(); }
