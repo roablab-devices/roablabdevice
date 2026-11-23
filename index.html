@@ -3766,6 +3766,13 @@ createApp({
           });
           const result = await res.json();
           if (result.success && result.user) {
+            // AJAX login has no navigation, so ask the browser's password manager explicitly.
+            try {
+              if (typeof navigator !== 'undefined' && navigator.credentials && typeof PasswordCredential !== 'undefined') {
+                const stored = navigator.credentials.store(new PasswordCredential({ id: uid, password: pin, name: result.user.full_name }));
+                if (stored && typeof stored.catch === 'function') stored.catch(() => {});
+              }
+            } catch {}
             this.showStaffLoginModal = false;
             this.showToast(result.message || 'Đăng nhập thành công!', 'success');
             if (result.user.role === 'STUDENT') {
