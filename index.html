@@ -79,7 +79,7 @@
     .btn-red-cta:disabled, .btn-cyan-cta:disabled { opacity: .5; cursor: not-allowed; }
     .quiet-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #666666; border-radius: 8px; background: transparent; padding: 8px 12px; color: #E2E8F0; font-size: .875rem; line-height: 1.25rem; font-weight: 600; }
     .quiet-button:hover { background: #313131; }
-    .site-header { background: #1F1F1F; border-bottom: 1px solid var(--line); }
+    .site-header { position: sticky; top: 0; z-index: 50; background: #1F1F1F; border-bottom: 1px solid var(--line); }
     .header-layout { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; max-width: 1280px; margin: auto; }
     .site-brand { color: #fff; font-size: 1.125rem; line-height: 1.75rem; font-weight: 700; white-space: nowrap; }
     .header-nav { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -106,8 +106,9 @@
     .catalog-view .group:hover img { transform: none; }
     .catalog-view .group:hover h3 { color: #fff; }
     .catalog-specs > div { font-size: .875rem; line-height: 1.25rem; }
-    #inventory-section { scroll-margin-top: 16px; }
+    #inventory-section { scroll-margin-top: 88px; }
     @media (max-width: 639px) {
+      #inventory-section { scroll-margin-top: 176px; }
       .header-layout { gap: 12px; }
       .header-nav { order: 3; width: 100%; }
       .student-access { width: 100%; }
