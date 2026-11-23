@@ -19,7 +19,7 @@ const app=config.data();
 Object.entries(config.methods).forEach(([key,fn])=>app[key]=fn.bind(app));
 Object.entries(config.computed).forEach(([key,fn])=>Object.defineProperty(app,key,{get:fn.bind(app)}));
 (async()=>{
- app.inputMssv='sv01';await app.fetchData();assert.equal(app.schemaVersion,2);
+ app.currentStudent={user_id:'sv01',full_name:'An',role:'STUDENT'};app.studentSession=h.students.sv01;await app.fetchData();assert.equal(app.schemaVersion,2);
  app.openResourceDialog('borrow',app.deviceById('MOTOR'));app.resourceForm.quantity=4;app.resourceForm.purpose='Đồ án';assert.equal(app.resourceDialogValid,true);
  await app.submitResourceDialog();assert.equal(app.loans[0].outstanding,4);assert.equal(app.deviceById('MOTOR').stock.available,16);assert.equal(app.myHoldingCount,4);
  const loan=app.loans[0];app.openResourceDialog('return',app.deviceById('MOTOR'),loan);app.resourceForm.quantity=2;
@@ -49,6 +49,6 @@ Object.entries(config.computed).forEach(([key,fn])=>Object.defineProperty(app,ke
  app.resourceDialog=null;app.openResourceDialog('booking',invalid);assert.equal(app.resourceDialog,null,'Invalid configuration blocks booking');
  app.openEditDeviceModal(invalid);Object.assign(app.deviceForm,{open_hour:'08:00',close_hour:'18:00',accessories:'Nguồn, Cáp'});
  await app.saveDeviceAsAdmin();assert.equal(app.invalidConfigurationDevices.length,0,'Staff can repair the invalid row through the UI');assert.equal(app.deviceById('ROBOT').open_hour,'08:00');
- app.inputMssv='';app.checkStudentWhitelist();app.openResourceDialog('borrow',app.deviceById('MOTOR'));assert.equal(app.currentStudent,null);
+ app.logoutStaff();app.openResourceDialog('borrow',app.deviceById('MOTOR'));assert.equal(app.currentStudent,null);
  console.log('PASS: frontend/backend quantity, partial return, QA, retry, booking, filters, staff session and invalid-hours recovery');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -22,7 +22,7 @@ Hai model khác nhau phải có hai mã danh mục. Thiết bị theo từng chi
 3. Chạy hàm **`upgradeInventorySchema`** từ trình soạn thảo Apps Script, kể cả khi đã dùng bản quản lý số lượng trước đó. Hàm bổ sung cột giờ hai buổi W–Z của `Devices` và cột `session` W của `Bookings`, giữ nguyên dữ liệu cũ. Có thể chạy lại. Nếu thấy báo xung đột cột, xử lý cột riêng đang chiếm N–Z trước; không đổi tên hoặc xóa dữ liệu một cách tùy ý.
 4. Cập nhật **deployment Web App hiện có** sang phiên bản Apps Script mới để giữ URL `/exec`. Theo [hướng dẫn quản lý deployment của Google](https://developers.google.com/apps-script/concepts/deployments), việc lưu mã chưa tự cập nhật phiên bản Web App đang phát hành.
 5. Phát hành `index.html` mới tới website ROAB LAB hiện có. Nếu tạo deployment mới làm thay đổi URL, cấu hình lại URL trong trang và kiểm tra đúng Spreadsheet.
-6. Đăng xuất rồi đăng nhập lại tài khoản cán bộ. Trang mới dùng phiên cán bộ do backend cấp; tên/vai trò cũ lưu trong trình duyệt không cấp quyền ghi dữ liệu.
+6. Đăng xuất rồi đăng nhập lại bằng cổng đăng nhập dùng chung (sinh viên và cán bộ). Trang mới dùng phiên do backend cấp; tên/vai trò cũ lưu trong trình duyệt không cấp quyền ghi dữ liệu. Sinh viên cần được cấp mã PIN trong `Users` trước khi đăng nhập.
 7. Mở **Sửa thiết bị → Cách sử dụng & số lượng** để cấu hình từng thiết bị. Dữ liệu cũ mặc định **Mượn mang đi / Từng chiếc / Tổng 1**.
 
 Ngoài cách chạy hàm trực tiếp ở bước 3, sau khi Web App đã cập nhật backend, Admin có thể bấm **Nâng cấp dữ liệu** trong website. Inspector không được nâng cấp schema.
@@ -31,7 +31,7 @@ Với Spreadsheet mới hoàn toàn, chạy **`initialSetup`**. Hàm chỉ tạo
 
 ## Mượn và trả theo số lượng
 
-1. Nhập MSSV đã được cấp phép như luồng hiện tại.
+1. Bấm **Đăng nhập** ở thanh trên cùng, nhập MSSV và mã PIN được lab cấp.
 2. Tìm động cơ/module, bấm **Mượn số lượng**, nhập số lượng và mục đích.
 3. Vào **Lịch sử dụng & phiếu mượn → Phiếu mượn số lượng** để xem từng phiếu. Có bộ lọc theo người dùng và thiết bị.
 4. Bấm **Trả thiết bị** ở đúng phiếu. Có thể trả 1 chiếc trước và trả phần còn lại vào lần khác. Số đã trả không còn tính vào số người đó đang giữ, nhưng chưa được cho mượn lại khi chưa kiểm định.
@@ -113,7 +113,7 @@ Không đổi cách quản lý của thiết bị đang mượn/chờ kiểm đ�
 
 Các thao tác ghi dùng [Script Lock](https://developers.google.com/apps-script/reference/lock/lock-service) của cùng dự án Apps Script. Không dùng hai dự án Apps Script độc lập để ghi cùng Spreadsheet, và không sửa số liệu phiếu trực tiếp trong Sheets khi hệ thống đang hoạt động.
 
-Phiếu mới có mã yêu cầu và dấu kiểm tra nội dung để gửi lại an toàn khi mất phản hồi. Trình duyệt giữ cùng mã khi gửi lại; không đóng phiếu rồi tạo phiếu mới nếu chưa kiểm tra kết quả. Bản này vẫn giữ cơ chế sinh viên nhập MSSV theo whitelist của hệ thống cũ: đây không phải xác thực danh tính bằng mật khẩu hay SSO. Cán bộ dùng token trong `sessionStorage`, không lưu mật khẩu trong trình duyệt; quyền được kiểm tra lại từ `Users`. [Cache của Apps Script có thể hết trước thời hạn](https://developers.google.com/apps-script/reference/cache/cache), khi đó cần đăng nhập lại.
+Phiếu mới có mã yêu cầu và dấu kiểm tra nội dung để gửi lại an toàn khi mất phản hồi. Trình duyệt giữ cùng mã khi gửi lại; không đóng phiếu rồi tạo phiếu mới nếu chưa kiểm tra kết quả. Sinh viên và cán bộ dùng chung cổng đăng nhập: backend kiểm tra mã PIN trong `Users` và cấp phiên cho mọi vai trò. Các thao tác mượn/trả/đặt lịch của sinh viên bắt buộc có phiên hợp lệ (không tin `user_id` gửi từ trình duyệt). Token nằm trong `sessionStorage`, không lưu mật khẩu trong trình duyệt; quyền được kiểm tra lại từ `Users`. [Cache của Apps Script có thể hết trước thời hạn](https://developers.google.com/apps-script/reference/cache/cache), khi đó cần đăng nhập lại.
 
 ## Kiểm tra mã nguồn
 

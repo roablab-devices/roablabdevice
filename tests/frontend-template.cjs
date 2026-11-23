@@ -34,7 +34,7 @@ const path=require('node:path');
  function view(){return visibleText(render.call(app,app,[])).replace(/\s+/g,' ');}
  let text=view();
  assert.match(text,/Thiết bị thử/);assert.match(text,/Tài liệu/);assert.match(text,/Lịch & phiếu mượn/);
- assert.match(text,/Đăng nhập cán bộ/);
+ assert.match(text,/Đăng nhập/);
  assert.doesNotMatch(text,/Kiểm định|Quản trị|Nâng cấp dữ liệu|Nhật ký|CẨM NANG/);
  app.adminUser={user_id:'admin',full_name:'Admin',role:'ADMIN'};
  text=view();assert.match(text,/Quản trị/);assert.match(text,/Kiểm định/);assert.match(text,/Nâng cấp dữ liệu/);assert.match(text,/Nhật ký/);

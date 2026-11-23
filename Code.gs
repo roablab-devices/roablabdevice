@@ -4,7 +4,7 @@
  * Hỗ trợ:
  * 1. Quản Trị Viên (Thêm, Bớt/Xóa thiết bị, Sửa thông số & tài liệu, Log chỉnh sửa)
  * 2. Kiểm Định (QA Audit đối soát ảnh song song & phê duyệt/báo vi phạm)
- * 3. Sinh Viên (Zero-Password Whitelist, Chụp ảnh trải phẳng linh kiện nén Drive)
+ * 3. Sinh Viên (Đăng nhập bằng MSSV + mã PIN do lab cấp, Chụp ảnh trải phẳng linh kiện nén Drive)
  * ======================================================================================
  */
 
@@ -301,13 +301,18 @@ function inventoryUser(ss, id) {
   if (users.length !== 1) throw new Error('Mã người dùng chưa được cấp phép hoặc bị trùng.');
   return {user_id: String(users[0][0]).trim(), full_name: String(users[0][2] || ''), role: String(users[0][4] || 'STUDENT').toUpperCase()};
 }
-function inventoryStaff(ss, token, roles) {
+function inventorySessionUser(ss, token) {
   const raw = token && CacheService.getScriptCache().get('session_' + String(token).slice(0, 180));
-  if (!raw) throw new Error('Phiên cán bộ đã hết hạn. Vui lòng đăng nhập lại.');
+  if (!raw) throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
   const session = JSON.parse(raw);
   const user = inventoryUser(ss, session.user_id);
   const version = CacheService.getScriptCache().get('auth_version_' + inventoryKey(user.user_id)) || '0';
-  if (session.version !== version || session.credential !== inventoryCredential(ss, user.user_id) || !roles.includes(user.role)) throw new Error('Phiên đăng nhập đã thay đổi hoặc tài khoản không có quyền. Vui lòng đăng nhập lại.');
+  if (session.version !== version || session.credential !== inventoryCredential(ss, user.user_id)) throw new Error('Phiên đăng nhập đã thay đổi. Vui lòng đăng nhập lại.');
+  return user;
+}
+function inventoryStaff(ss, token, roles) {
+  const user = inventorySessionUser(ss, token);
+  if (!roles.includes(user.role)) throw new Error('Tài khoản không có quyền cho thao tác này.');
   return user;
 }
 function inventoryCredential(ss, id) {
@@ -452,7 +457,8 @@ function inventoryHandle(ss, payload, staff) {
   if (action === 'admin_upgrade_schema') return inventoryUpgrade(ss);
   if (!inventorySchemaReady(ss)) throw new Error('Cần nâng cấp dữ liệu số lượng và lịch trước khi sử dụng.');
   const state = inventoryState(ss);
-  const user = staff || inventoryUser(ss, payload.user_id);
+  // Members (students) act only through a server-issued session; payload user_id alone is not trusted.
+  const user = staff || inventorySessionUser(ss, payload.session);
   if (action === 'inventory_borrow') {
     const device = inventoryDevice(ss, payload.device_id);
     if (device.config.usage_mode !== 'portable' || device.config.tracking_mode !== 'quantity') throw new Error('Thiết bị này không dùng phiếu mượn số lượng.');
@@ -788,45 +794,57 @@ function doPost(e) {
     }
 
     // -------------------------------------------------------------
-    // LUỒNG 1: ĐĂNG NHẬP QUẢN TRỊ VIÊN (ADMIN & KIỂM ĐỊNH VIÊN INSPECTOR)
+    // LUỒNG 1: ĐĂNG NHẬP DÙNG CHUNG (SINH VIÊN, KIỂM ĐỊNH VIÊN, QUẢN TRỊ VIÊN)
+    // `admin_login` được giữ làm bí danh cho các client cũ.
     // -------------------------------------------------------------
-    if (action === "admin_login") {
+    if (action === "user_login" || action === "admin_login") {
       const userSheet = ss.getSheetByName(CONFIG.SHEET_USERS);
       if (!userSheet) return createJsonResponse({ success: false, message: "Sheet Users không tồn tại!" });
       
       const inputId = String(payload.user_id || "").trim();
       const inputPin = String(payload.pin || "").trim();
-      if (!inputId || !inputPin || inputId.length > 100 || inputPin.length > 128) throw new Error('Nhập tài khoản và mật khẩu hợp lệ.');
+      if (!inputId || !inputPin || inputId.length > 100 || inputPin.length > 128) throw new Error('Nhập tài khoản và mã PIN hợp lệ.');
       const loginCache = CacheService.getScriptCache();
-      const loginKey = 'staff_login_attempts_' + encodeURIComponent(inputId.toLowerCase());
+      const loginKey = 'login_attempts_' + encodeURIComponent(inputId.toLowerCase());
       const loginAttempts = Number(loginCache.get(loginKey) || 0);
       if (loginAttempts >= 5) throw new Error('Đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau 15 phút.');
       const userRows = userSheet.getDataRange().getValues();
       
-      let matchedStaff = null;
+      let matchedUser = null;
+      let pinNotIssued = false;
       for (let i = 1; i < userRows.length; i++) {
         const rowId = String(userRows[i][0] || "").trim();
+        if (rowId.toLowerCase() !== inputId.toLowerCase()) continue;
         const rowPin = String(userRows[i][1] || "").trim();
         const rowRole = String(userRows[i][4] || "STUDENT").toUpperCase();
-        
-        if ((rowRole === "ADMIN" || rowRole === "INSPECTOR") && rowId.toLowerCase() === inputId.toLowerCase() && rowPin === inputPin) {
-          matchedStaff = {
+        if (!rowPin) { pinNotIssued = true; break; }
+        if (rowPin === inputPin) {
+          matchedUser = {
             user_id: rowId,
-            full_name: String(userRows[i][2] || "Quản trị viên Lab"),
+            full_name: String(userRows[i][2] || "Thành viên Lab"),
             phone: String(userRows[i][3] || ""),
+            cohort: String(userRows[i][5] || "").trim(),
             role: rowRole
           };
-          break;
         }
+        break;
       }
       
-      if (matchedStaff) {
+      if (matchedUser) {
         loginCache.remove(loginKey);
-        return createJsonResponse({ success: true, user: matchedStaff, staff_session: inventorySession(matchedStaff), message: `Chào mừng ${matchedStaff.full_name} (${matchedStaff.role})!` });
-      } else {
-        loginCache.put(loginKey, String(loginAttempts + 1), 900);
-        return createJsonResponse({ success: false, message: "Sai tài khoản Quản trị/Kiểm định hoặc mã PIN!" });
+        const sessionToken = inventorySession(matchedUser);
+        return createJsonResponse({
+          success: true,
+          user: matchedUser,
+          session: sessionToken,
+          // Staff keeps the legacy field; both roles use `session` from now on.
+          staff_session: matchedUser.role === 'STUDENT' ? '' : sessionToken,
+          message: `Chào mừng ${matchedUser.full_name}!`
+        });
       }
+      if (pinNotIssued) return createJsonResponse({ success: false, message: "Tài khoản chưa được cấp mã PIN. Liên hệ cán bộ phòng lab." });
+      loginCache.put(loginKey, String(loginAttempts + 1), 900);
+      return createJsonResponse({ success: false, message: "Sai tài khoản hoặc mã PIN!" });
     }
 
     // -------------------------------------------------------------
@@ -1153,10 +1171,21 @@ function doPost(e) {
       const note = String(payload.note || "").trim();
       const photoBase64 = payload.photo_base64;
       
-      if (!userId || deviceIds.length === 0) {
+      // The signed-in member is the only source of identity for legacy handover transactions.
+      let member;
+      try {
+        member = inventorySessionUser(ss, payload.session);
+      } catch (sessionError) {
+        return createJsonResponse({ success: false, message: sessionError.message });
+      }
+      if (!userId) userId = member.user_id;
+      if (inventoryKey(userId) !== inventoryKey(member.user_id)) {
+        return createJsonResponse({ success: false, message: "Tài khoản đăng nhập không khớp người thực hiện giao dịch." });
+      }
+      if (deviceIds.length === 0) {
         return createJsonResponse({ success: false, message: "Thiếu thông tin người dùng hoặc danh sách thiết bị!" });
       }
-      const borrower = inventoryUser(ss, userId);
+      const borrower = member;
       userId = borrower.user_id;
       userName = borrower.full_name;
 

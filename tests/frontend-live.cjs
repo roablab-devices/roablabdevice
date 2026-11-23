@@ -7,11 +7,13 @@ const script = html.slice(html.indexOf('const { createApp }'), html.lastIndexOf(
 assert.doesNotMatch(html, /DEMO_|isDemoMode|resetToDemo|quickFillStaff|9999|7777|images\.unsplash/);
 let config;
 const storage = new Map();
+const session = new Map();
 let calls = 0;
 let response = {success:true,devices:[],whitelist:[],audit_queue:[],edit_logs:[]};
 const context = vm.createContext({
   Vue: {createApp: options => {config=options; return {mount() {}};}},
   localStorage: {getItem: key => storage.get(key) || null, setItem: (key,value) => storage.set(key,value), removeItem: key => storage.delete(key)},
+  sessionStorage: {getItem: key => session.get(key) || null, setItem: (key,value) => session.set(key,value), removeItem: key => session.delete(key)},
   URL,
   confirm: () => true,
   fetch: async () => {calls++; if (response instanceof Error) throw response; return {json:async()=>response};},
@@ -34,7 +36,8 @@ for(const [name,fn] of Object.entries(config.computed)) Object.defineProperty(ap
   assert.equal(config.data().adminUser,null);
   storage.delete('slam_staff_user');
   assert.equal(app.staffLoginForm.pin,'');
-  assert.equal(app.inputMssv,'');
+  assert.equal(app.studentSession,'');
+  assert.equal(app.currentStudent,null);
   assert.ok(app.apiUrl.startsWith('https://script.google.com/macros/s/'));
   assert.equal(app.configApiUrl,app.apiUrl);
   app.apiUrl='';
@@ -43,7 +46,23 @@ for(const [name,fn] of Object.entries(config.computed)) Object.defineProperty(ap
   assert.ok(app.connectionError);
   assert.equal(app.devices.length,0);
   assert.throws(()=>app.requestApi({method:'POST'}));
+  // Unified login routes students to the member session and restores it for the tab.
   app.apiUrl='https://example.com/api';
+  const realRequestApi=app.requestApi;
+  app.requestApi=async()=>({json:async()=>({success:true,user:{user_id:'sv01',full_name:'An',role:'STUDENT'},session:'STUDENT-SESSION'})});
+  app.staffLoginForm={user_id:'sv01',pin:'test-sv-password'};
+  await app.handleStaffLogin();
+  assert.equal(app.currentStudent.user_id,'sv01');
+  assert.equal(app.studentSession,'STUDENT-SESSION');
+  assert.equal(app.adminUser,null);
+  assert.equal(app.showStaffLoginModal,false);
+  assert.equal(config.data().currentStudent.user_id,'sv01','Refresh restores student login');
+  assert.equal(config.data().studentSession,'STUDENT-SESSION');
+  app.logoutStaff();
+  assert.equal(app.currentStudent,null);
+  assert.equal(app.studentSession,'');
+  assert.equal(config.data().currentStudent,null,'Logout clears saved student login');
+  app.requestApi=realRequestApi;
   response={success:true,devices:[{device_id:'REAL'}],whitelist:[],audit_queue:[],edit_logs:[]};
   await app.fetchData();
   assert.equal(app.devices[0].device_id,'REAL');

@@ -60,7 +60,7 @@ test('Cleanup buffer, fault holds and overdue sessions still reduce capacity',()
 test('Missing purpose, invalid quantity and missing identity are explained',()=>{
  const{app}=setup();app.resourceForm.purpose='';assert.equal(app.resourceFieldInvalid('purpose'),true);
  app.resourceForm.quantity=0;assert.equal(app.resourceFieldInvalid('quantity'),true);
- app.currentStudent=null;assert.match(app.resourceDialogIssues.find(i=>i.field==='form').message,/MSSV/);assert.equal(app.resourceDialogValid,false);
+ app.currentStudent=null;assert.match(app.resourceDialogIssues.find(i=>i.field==='form').message,/Đăng nhập tài khoản sinh viên/);assert.equal(app.resourceDialogValid,false);
 });
 test('Maintenance disables both session choices',()=>{
  const{app,device}=setup();device.service_status='maintenance';app.resourceForm.booking_date='2026-11-22';assert.ok(app.resourceSessions.every(s=>/bảo trì/.test(s.reason)));assert.equal(app.resourceDialogValid,false);

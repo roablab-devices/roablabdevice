@@ -10,7 +10,7 @@ function setup(status = 'Trong kho', holder = '') {
   const users = [['ID','PIN','Name','Phone','Role','Khóa'],
     ['admin','old-admin-pin','Admin','','ADMIN'],
     ['inspector','old-inspector-pin','Inspector','','INSPECTOR'],
-    ['sv01','','An','','STUDENT'], ['sv02','','Binh','','STUDENT']];
+    ['sv01','student-pin','An','','STUDENT'], ['sv02','student-pin','Binh','','STUDENT']];
   const cache = new Map();
   const uploaded = [];
   function sheet(rows) {
@@ -30,7 +30,7 @@ function setup(status = 'Trong kho', holder = '') {
     LockService: {getScriptLock: () => ({waitLock() {}, releaseLock() {}})},
     CacheService: {getScriptCache: () => ({get: k => cache.get(k), put: (k,v) => cache.set(k,v), remove: k => cache.delete(k)})},
     ContentService: {MimeType: {JSON: 'json'}, createTextOutput: text => ({setMimeType: () => JSON.parse(text)})},
-    Utilities: {DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'utf8'},computeDigest:(algorithm,value)=>Array.from(require('node:crypto').createHash('sha256').update(value).digest()),formatDate: () => '2026-11-03', getUuid: () => 'test-id',
+    Utilities: {DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'utf8'},computeDigest:(algorithm,value)=>Array.from(require('node:crypto').createHash('sha256').update(value).digest()),formatDate: () => '2026-11-03', getUuid: (() => {let n = 0; return () => 'test-id-' + (++n);})(),
       base64Decode: text => {
         const buf = Buffer.from(text, 'base64');
         const obj = { length: buf.length };
@@ -47,9 +47,15 @@ function setup(status = 'Trong kho', holder = '') {
   });
   vm.runInContext(source, ctx);
   const staffSession = ctx.inventorySession({user_id:'admin'});
-  return {ctx, devices, logs, users, uploaded, writes: () => writes,
-    post: p => ctx.doPost({postData: {contents: JSON.stringify({...p, ...(['admin_save_device','admin_delete_device','audit_transaction','admin_unlock'].includes(p.action) ? {staff_session:staffSession} : {})})}})};
+  const studentSessions = {sv01: ctx.inventorySession({user_id:'sv01'}), sv02: ctx.inventorySession({user_id:'sv02'})};
+  return {ctx, devices, logs, users, uploaded, writes: () => writes, studentSessions,
+    post: p => ctx.doPost({postData: {contents: JSON.stringify({
+      ...p,
+      ...(['admin_save_device','admin_delete_device','audit_transaction','admin_unlock'].includes(p.action) ? {staff_session:staffSession} : {}),
+      ...(!p.staff_session && !p.session && studentSessions[String(p.user_id || '').toLowerCase()] ? {session:studentSessions[String(p.user_id || '').toLowerCase()]} : {})
+    })}})};
 }
+const unsigned = (p) => ({action:p.action, tx_type:p.tx_type, device_ids:p.device_ids, user_id:p.user_id});
 const base = {action:'transaction', tx_type:'Mượn mới', user_id:'sv01', user_name:'An', device_ids:['D1']};
 function rejected(status, holder, extra) {
   const s = setup(status, holder);
@@ -81,6 +87,18 @@ rejected('Đang mượn', 'sv01', {tx_type:'Trả về kho', return_condition:'i
   const before = s.writes();
   assert.equal(s.post({...base, user_id:'sv02'}).success, false);
   assert.equal(s.writes(), before);
+  count++;
+}
+{
+  const s = setup();
+  assert.equal(s.post({action:'user_login',user_id:'sv01',pin:'student-pin'}).success, true);
+  assert.equal(s.post({action:'user_login',user_id:'sv01',pin:'wrong'}).success, false);
+  const forged = s.ctx.doPost({postData:{contents:JSON.stringify({action:'transaction',tx_type:'Mượn mới',device_ids:['D1'],user_id:'sv01'})}});
+  assert.equal(forged.success, false, 'Student identity requires a session');
+  assert.equal(s.writes(), 0);
+  const swapped = s.post({...base, session:s.studentSessions.sv02});
+  assert.equal(swapped.success, false, 'Session identity cannot be swapped with user_id');
+  assert.equal(s.writes(), 0);
   count++;
 }
 for (const condition of ['Hoạt động tốt - Đủ đồ','Thiếu phụ kiện','Báo lỗi/Hỏng']) {

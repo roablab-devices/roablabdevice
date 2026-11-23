@@ -6,7 +6,7 @@ const source = fs.readFileSync(path.join(__dirname, '../Code.gs'), 'utf8');
 function harness({now = '2026-11-23T01:00:00.000Z', migrate = true, timezone = 'Asia/Ho_Chi_Minh', sourceOverride = source} = {}) {
   const rows = {
     Devices: [['ID','Name','Category','Location','Accessories','Image','Specs','Document','Status','Holder','Holder name','Purpose','Updated'], ['D1','Single device','Khác','Lab','','','','','Trong kho','','','','']],
-    Users: [['ID','PIN','Name','Phone','Role','Cohort'], ['admin','test-admin-password','Admin','','ADMIN'], ['qa','test-qa-password','QA','','INSPECTOR'], ['sv01','','An','','STUDENT'], ['sv02','','Bình','','STUDENT']],
+    Users: [['ID','PIN','Name','Phone','Role','Cohort'], ['admin','test-admin-password','Admin','','ADMIN'], ['qa','test-qa-password','QA','','INSPECTOR'], ['sv01','test-sv-password','An','','STUDENT'], ['sv02','test-sv-password','Bình','','STUDENT']],
     Logs: [['Time','ID','User','Action','Devices','Purpose','Accessories','Condition','Note','Photo','Preview','Audit','Inspector','Audit note']]
   };
   let writes = 0, locked = false, uid = 0, failWrite = false;
@@ -42,9 +42,19 @@ function harness({now = '2026-11-23T01:00:00.000Z', migrate = true, timezone = '
     Logger:{log(){}},DriveApp:{getFolderById(){throw Error('Unexpected upload');}}
   });
   vm.runInContext(sourceOverride, context);
-  const post = payload => context.doPost({postData:{contents:JSON.stringify(payload)}});
+  const rawPost = payload => context.doPost({postData:{contents:JSON.stringify(payload)}});
+  const students = {};
+  // Fixture convenience: requests that name a seeded student are signed with that student's real session.
+  const post = payload => {
+    const body = {...payload};
+    const key = String(body.user_id || '').toLowerCase();
+    if (!body.staff_session && !body.session && students[key]) body.session = students[key];
+    return rawPost(body);
+  };
   const login = (id='admin',pin='test-admin-password') => {const response=post({action:'admin_login',user_id:id,pin});if(!response.success)throw Error(response.message);return response.staff_session;};
   const admin=login(), qa=login('qa','test-qa-password');
+  const loginStudent = id => {const response=post({action:'user_login',user_id:id,pin:'test-sv-password'});if(!response.success)throw Error(response.message);students[id]=response.session;return response;};
+  loginStudent('sv01'); loginStudent('sv02');
   const adminPost=payload=>post({...payload,staff_session:admin});
   const qaPost=payload=>post({...payload,staff_session:qa});
   if(migrate) {const result=adminPost({action:'admin_upgrade_schema'});if(!result.success)throw Error(result.message);}
@@ -54,6 +64,6 @@ function harness({now = '2026-11-23T01:00:00.000Z', migrate = true, timezone = '
   }
   const get=()=>context.doGet({});
   const stock=id=>get().devices.find(d=>d.device_id===id).stock;
-  return {rows,context,ss,post,adminPost,qaPost,addDevice,get,stock,cache,formats,admin,qa,stamp,writes:()=>writes,setFailWrite:value=>failWrite=value,setLocked:value=>locked=value};
+  return {rows,context,ss,post,rawPost,adminPost,qaPost,addDevice,get,stock,cache,formats,admin,qa,students,stamp,writes:()=>writes,setFailWrite:value=>failWrite=value,setLocked:value=>locked=value};
 }
 module.exports = {harness};
